@@ -1,3 +1,4 @@
 *.csv
 *.json
 report.html
+__pycache__
