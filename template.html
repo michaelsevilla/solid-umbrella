@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Budget Report</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #1e293b;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            margin: 0;
+            padding: 2rem;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .file-section {
+            margin-bottom: 4rem;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 2rem;
+        }
+        .card {
+            background: var(--card);
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+            margin-bottom: 2rem;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+            margin-bottom: 2rem;
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+        th, td { text-align: left; padding: 0.75rem; border-bottom: 1px solid #e2e8f0; }
+        th { background: #f1f5f9; position: sticky; top: 0; }
+        tbody tr:hover { background-color: #f1f5f9; }
+        .tag {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: #e2e8f0;
+        }
+        .filter-info {
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .clear-filter {
+            font-size: 0.75rem;
+            color: var(--primary);
+            cursor: pointer;
+            text-decoration: underline;
+            display: none;
+        }
+        h2 { border-left: 4px solid var(--primary); padding-left: 1rem; margin-bottom: 1.5rem; }
+        dialog {
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+            padding: 2rem;
+            max-width: 400px;
+            width: 100%;
+        }
+        dialog::backdrop {
+            background: rgba(0, 0, 0, 0.5);
+        }
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            border: none;
+            font-size: 0.875rem;
+        }
+        .btn-cancel {
+            background: #e2e8f0;
+            color: #475569;
+        }
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        .income-tooltip-container {
+            position: relative;
+            display: inline-block;
+        }
+        .income-tooltip-text {
+            visibility: hidden;
+            width: max-content;
+            background-color: #1e293b;
+            color: #fff;
+            text-align: left;
+            border-radius: 6px;
+            padding: 8px 12px;
+            position: absolute;
+            z-index: 10;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 0.875rem;
+            font-weight: 400;
+            white-space: pre-wrap;
+            pointer-events: none;
+        }
+        .income-tooltip-container:hover .income-tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="reportContainer">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
+            <h1 style="margin: 0;">Monthly Spending Analysis</h1>
+            <div style="display: flex; gap: 0.5rem; background: #e2e8f0; padding: 0.35rem; border-radius: 8px;">
+                <button id="btn-pie" class="btn btn-primary" style="box-shadow: 0 2px 4px rgb(0 0 0 / 0.1);" onclick="setChartType('pie')">Pie Chart</button>
+                <button id="btn-sankey" class="btn btn-cancel" onclick="setChartType('sankey')">Cash Flow</button>
+                <button id="btn-bar" class="btn btn-cancel" onclick="setChartType('bar')">Raw Values</button>
+            </div>
+        </div>
+    </div>
+
+    <dialog id="editModal">
+        <h3 style="margin-top: 0; margin-bottom: 1rem;">Edit Category</h3>
+        <p id="modalDesc" style="margin-bottom: 1rem; white-space: pre-wrap; font-size: 0.875rem;"></p>
+        <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">New Category</label>
+        <input type="text" id="modalInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">Match Substring (for "All Future")</label>
+        <input type="text" id="modalMatchInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <div class="modal-buttons">
+            <button class="btn btn-cancel" onclick="closeEditModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="applyCategory('justThis')">Just This</button>
+            <button class="btn btn-primary" onclick="applyCategory('all')">All Future</button>
+        </div>
+    </dialog>
+
+    <dialog id="removeModal">
+        <h3 style="margin-top: 0; margin-bottom: 1rem;">Remove Transaction</h3>
+        <p id="removeModalDesc" style="margin-bottom: 1rem; white-space: pre-wrap; font-size: 0.875rem;"></p>
+        <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">Match Substring (for "All Matching")</label>
+        <input type="text" id="removeMatchInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <div class="modal-buttons">
+            <button class="btn btn-cancel" onclick="closeRemoveModal()">Cancel</button>
+            <button class="btn btn-primary" style="background: #ef4444;" onclick="applyRemove('justThis')">Just This</button>
+            <button class="btn btn-primary" style="background: #ef4444;" onclick="applyRemove('all')">All Matching</button>
+        </div>
+    </dialog>
+
+    <script>
+        Chart.register(ChartDataLabels);
+        const overrides = __OVERRIDES_JSON__;
+        const allData = __DATA_JSON__;
+        const container = document.getElementById('reportContainer');
+        const chartInstances = {};
+        let currentChartType = 'pie';
+        let globalMaxCategory = 0;
+        const currentFilters = {};
+        const currentSorts = {};
+
+        function updateGlobalMax() {
+            globalMaxCategory = 0;
+            allData.forEach(d => {
+                Object.values(d.totals).forEach(val => {
+                    if (Math.abs(val) > globalMaxCategory) {
+                        globalMaxCategory = Math.abs(val);
+                    }
+                });
+            });
+        }
+        updateGlobalMax();
+
+        function setChartType(type) {
+            currentChartType = type;
+            ['pie', 'sankey', 'bar'].forEach(b => {
+                const el = document.getElementById(`btn-${b}`);
+                el.className = b === type ? 'btn btn-primary' : 'btn btn-cancel';
+                el.style.boxShadow = b === type ? '0 2px 4px rgb(0 0 0 / 0.1)' : 'none';
+            });
+            allData.forEach((d, idx) => {
+                if (activeMonths.has(d.month)) {
+                    renderChart(idx, d);
+                }
+            });
+        }
+
+        function formatCurrency(val) {
+            const absVal = Math.abs(val);
+            const str = absVal >= 1000 ? (absVal / 1000).toFixed(1) + 'k' : absVal.toFixed(0);
+            return val < 0 ? '-$' + str : '$' + str;
+        }
+
+        function truncateDesc(desc) {
+            return desc.length > 20 ? desc.substring(0, 20) + '...' : desc;
+        }
+
+        overrides.ignored_descriptions = overrides.ignored_descriptions || [];
+        overrides.ignored_exact = overrides.ignored_exact || [];
+
+        function isIgnored(t) {
+            const tId = `${t.date}|${t.description}|${parseFloat(t.amount).toFixed(2)}`;
+            if (overrides.ignored_exact.includes(tId)) return true;
+            const descLower = t.description.toLowerCase();
+            return overrides.ignored_descriptions.some(d => descLower.includes(d.toLowerCase()));
+        }
+        
+        // Generate consistent colors for categories across all files
+        const colorPalette = [
+            '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#475569',
+            '#06b6d4', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6', '#f59e0b', '#3b82f6'
+        ];
+        const categoryColors = {};
+        let colorIdx = 0;
+        allData.forEach(d => {
+            Object.keys(d.totals).forEach(cat => {
+                if (!categoryColors[cat]) {
+                    categoryColors[cat] = colorPalette[colorIdx % colorPalette.length];
+                    colorIdx++;
+                }
+            });
+        });
+
+        // Setup default 3 months
+        const activeMonths = new Set();
+        allData.slice(0, 3).forEach(d => activeMonths.add(d.month));
+
+        // Create month filter buttons
+        const monthFilterContainer = document.createElement('div');
+        monthFilterContainer.style.display = 'flex';
+        monthFilterContainer.style.gap = '0.5rem';
+        monthFilterContainer.style.marginBottom = '2rem';
+        monthFilterContainer.style.flexWrap = 'wrap';
+        
+        allData.forEach(d => {
+            const btn = document.createElement('button');
+            btn.innerText = d.month;
+            btn.className = 'btn';
+            btn.style.backgroundColor = activeMonths.has(d.month) ? 'var(--primary)' : '#e2e8f0';
+            btn.style.color = activeMonths.has(d.month) ? 'white' : '#475569';
+            btn.onclick = () => {
+                if (activeMonths.has(d.month)) {
+                    activeMonths.delete(d.month);
+                    btn.style.backgroundColor = '#e2e8f0';
+                    btn.style.color = '#475569';
+                } else {
+                    activeMonths.add(d.month);
+                    btn.style.backgroundColor = 'var(--primary)';
+                    btn.style.color = 'white';
+                }
+                toggleMonthVisibility();
+            };
+            monthFilterContainer.appendChild(btn);
+        });
+        container.appendChild(monthFilterContainer);
+
+        const monthsWrapper = document.createElement('div');
+        monthsWrapper.style.display = 'flex';
+        monthsWrapper.style.flexWrap = 'nowrap';
+        monthsWrapper.style.overflowX = 'auto';
+        monthsWrapper.style.gap = '2rem';
+        monthsWrapper.style.marginBottom = '2rem';
+        monthsWrapper.style.paddingBottom = '1rem';
+        container.appendChild(monthsWrapper);
+
+        const removedWrapper = document.createElement('div');
+        removedWrapper.className = 'card';
+        removedWrapper.style.marginTop = '4rem';
+        removedWrapper.innerHTML = `
+            <h2>Removed Transactions</h2>
+            <div style="max-height: 400px; overflow-y: auto;">
+                <table id="removedTable">
+                    <thead>
+                        <tr>
+                            <th>Description</th>
+                            <th>Times Removed</th>
+                            <th>Total Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        `;
+        container.appendChild(removedWrapper);
+
+        allData.forEach((data, fileIdx) => {
+            const monthCol = document.createElement('div');
+            monthCol.id = `monthCol-${fileIdx}`;
+            monthCol.style.flex = '0 0 450px';
+            monthCol.style.display = 'flex';
+            monthCol.style.flexDirection = 'column';
+            monthCol.style.gap = '2rem';
+
+            const chartCard = document.createElement('div');
+            chartCard.className = 'card';
+            chartCard.style.marginBottom = '0';
+            chartCard.innerHTML = `
+                <h2>${data.month}</h2>
+                <div style="display: flex; justify-content: center; align-items: center; gap: 0.75rem; margin-top: -1rem; margin-bottom: 1.5rem;">
+                    <div class="income-tooltip-container" id="income-container-${fileIdx}" style="display: none;">
+                        <span id="income-${fileIdx}" style="color: #16a34a; font-size: 1.25rem; font-weight: bold; cursor: default;"></span>
+                        <div class="income-tooltip-text" id="income-tooltip-${fileIdx}"></div>
+                    </div>
+                    <div class="income-tooltip-container" id="expected-container-${fileIdx}" style="display: none;">
+                        <span id="expected-${fileIdx}" style="color: #ef4444; font-size: 1.25rem; font-weight: bold; cursor: default;"></span>
+                        <div class="income-tooltip-text" id="expected-tooltip-${fileIdx}"></div>
+                    </div>
+                    <div class="income-tooltip-container" id="net-container-${fileIdx}" style="display: none;">
+                        <span id="net-${fileIdx}" style="color: #1e293b; font-size: 1.25rem; font-weight: bold; cursor: default;"></span>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-${fileIdx}"></canvas>
+                    <div id="sankey-${fileIdx}" style="display: none; width: 100%; height: 100%;"></div>
+                </div>
+            `;
+            monthCol.appendChild(chartCard);
+
+            const tableCard = document.createElement('div');
+            tableCard.className = 'card';
+            tableCard.style.marginBottom = '0';
+            tableCard.style.flex = '1';
+            tableCard.innerHTML = `
+                <div class="filter-info">
+                    <h3 id="title-${fileIdx}">${data.month} - Transactions</h3>
+                    <span class="clear-filter" id="clear-${fileIdx}" onclick="resetFilter(${fileIdx})">Clear Filter</span>
+                </div>
+                <div style="max-height: 500px; overflow-y: auto;">
+                    <table id="table-${fileIdx}">
+                        <thead>
+                            <tr>
+                                <th style="cursor: pointer; user-select: none;" onclick="sortTable(${fileIdx}, 'description')" title="Sort by Description">Description ↕</th>
+                                <th style="cursor: pointer; user-select: none;" onclick="sortTable(${fileIdx}, 'category')" title="Sort by Category">Category ↕</th>
+                                <th style="cursor: pointer; user-select: none;" onclick="sortTable(${fileIdx}, 'amount')" title="Sort by Amount">Amount ↕</th>
+                                <th>Edit</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            `;
+            monthCol.appendChild(tableCard);
+            monthsWrapper.appendChild(monthCol);
+
+            renderTable(fileIdx);
+            renderChart(fileIdx, data);
+            updateIncomeDisplay(fileIdx, data);
+        });
+
+        function updateIncomeDisplay(fileIdx, data) {
+            const contInc = document.getElementById(`income-container-${fileIdx}`);
+            const elInc = document.getElementById(`income-${fileIdx}`);
+            const ttInc = document.getElementById(`income-tooltip-${fileIdx}`);
+            
+            const contExp = document.getElementById(`expected-container-${fileIdx}`);
+            const elExp = document.getElementById(`expected-${fileIdx}`);
+            const ttExp = document.getElementById(`expected-tooltip-${fileIdx}`);
+            
+            const contNet = document.getElementById(`net-container-${fileIdx}`);
+            const elNet = document.getElementById(`net-${fileIdx}`);
+            
+            if (!contInc) return;
+            const incTotal = data.income_total || 0;
+            const expTotal = Math.abs(data.expected_total || 0);
+            
+            if (incTotal > 0) {
+                contInc.style.display = 'inline-block';
+                elInc.innerText = '+' + formatCurrency(incTotal);
+                ttInc.innerText = 'Income:\n' + (data.income_breakdown || []).map(inc => `  ${truncateDesc(inc.desc)}: ${formatCurrency(inc.amount)}`).join('\n');
+            } else {
+                contInc.style.display = 'none';
+            }
+
+            if (expTotal > 0) {
+                contExp.style.display = 'inline-block';
+                elExp.innerText = '-' + formatCurrency(expTotal);
+                ttExp.innerText = 'Expected:\n' + (data.expected_breakdown || []).map(exp => `  ${truncateDesc(exp.desc)}: ${formatCurrency(exp.amount)}`).join('\n');
+            } else {
+                contExp.style.display = 'none';
+            }
+            
+            if (incTotal > 0 && expTotal > 0) {
+                contNet.style.display = 'inline-block';
+                elNet.innerText = '= ' + formatCurrency(incTotal - expTotal);
+            } else {
+                contNet.style.display = 'none';
+            }
+        }
+
+        function toggleMonthVisibility() {
+            allData.forEach((data, fileIdx) => {
+                const isVisible = activeMonths.has(data.month);
+                const monthCol = document.getElementById(`monthCol-${fileIdx}`);
+                
+                const wasHidden = monthCol.style.display === 'none';
+                monthCol.style.display = isVisible ? 'flex' : 'none';
+                
+                // Prevent Plotly 0x0 bugs by re-rendering right after becoming visible
+                if (isVisible && wasHidden) {
+                    renderChart(fileIdx, data);
+                }
+            });
+        }
+        toggleMonthVisibility();
+
+        function renderTable(fileIdx, filterCategory) {
+            const data = allData[fileIdx];
+            const tbody = document.querySelector(`#table-${fileIdx} tbody`);
+            const title = document.getElementById(`title-${fileIdx}`);
+            const clearBtn = document.getElementById(`clear-${fileIdx}`);
+            
+            if (filterCategory !== undefined) {
+                currentFilters[fileIdx] = filterCategory;
+            }
+            const activeFilter = currentFilters[fileIdx] || null;
+
+            tbody.innerHTML = '';
+            
+            let tableSum = 0;
+            const txs = [];
+            data.transactions.forEach((t, origIdx) => {
+                if (isIgnored(t)) return;
+                if (activeFilter && t.category !== activeFilter) return;
+                tableSum += parseFloat(t.amount);
+                txs.push({ t, origIdx });
+            });
+            
+            if (!activeFilter) {
+                tableSum = (data.income_total || 0) - Math.abs(data.expected_total || 0);
+            }
+
+            const sort = currentSorts[fileIdx];
+            if (sort) {
+                txs.sort((a, b) => {
+                    let valA = a.t[sort.col];
+                    let valB = b.t[sort.col];
+                    if (sort.col === 'amount') {
+                        valA = parseFloat(valA);
+                        valB = parseFloat(valB);
+                    } else {
+                        valA = valA.toString().toLowerCase();
+                        valB = valB.toString().toLowerCase();
+                    }
+                    if (valA < valB) return sort.asc ? -1 : 1;
+                    if (valA > valB) return sort.asc ? 1 : -1;
+                    return 0;
+                });
+            }
+
+            const sumStr = formatCurrency(tableSum);
+
+            if (activeFilter) {
+                title.innerText = `${sumStr} - Transactions: ${activeFilter}`;
+                title.style.color = categoryColors[activeFilter] || 'inherit';
+            } else {
+                title.innerText = `${sumStr} - All Transactions`;
+                title.style.color = 'inherit';
+            }
+            clearBtn.style.display = activeFilter ? 'inline' : 'none';
+
+            txs.forEach(({ t, origIdx }) => {
+                const tr = document.createElement('tr');
+                tr.title = `Source: ${t.source}`;
+                const amountVal = parseFloat(t.amount);
+                const amountStr = formatCurrency(amountVal);
+                const colorStyle = amountVal < 0 ? 'color: red;' : '';
+                tr.innerHTML = `
+                    <td>${t.description}</td>
+                    <td><span class="tag">${t.category}</span></td>
+                    <td style="${colorStyle}">${amountStr}</td>
+                    <td>
+                        <span style="cursor: pointer; font-size: 0.85rem;" onclick="editCategory(${fileIdx}, ${origIdx})" title="Edit category">✏️</span>
+                        <span style="cursor: pointer; font-size: 0.85rem; margin-left: 12px;" onclick="removeTransaction(${fileIdx}, ${origIdx})" title="Remove transaction">❌</span>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function sortTable(fileIdx, col) {
+            if (!currentSorts[fileIdx]) {
+                currentSorts[fileIdx] = { col: col, asc: true };
+            } else if (currentSorts[fileIdx].col === col) {
+                currentSorts[fileIdx].asc = !currentSorts[fileIdx].asc;
+            } else {
+                currentSorts[fileIdx] = { col: col, asc: true };
+            }
+            renderTable(fileIdx);
+        }
+
+        function renderRemovedTable() {
+            const tbody = document.querySelector('#removedTable tbody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            const removedSummary = {};
+            
+            allData.forEach(d => {
+                d.transactions.forEach(t => {
+                    if (isIgnored(t)) {
+                        const key = t.description;
+                        if (!removedSummary[key]) {
+                            removedSummary[key] = { count: 0, total: 0 };
+                        }
+                        removedSummary[key].count += 1;
+                        removedSummary[key].total += parseFloat(t.amount);
+                    }
+                });
+            });
+            
+            Object.entries(removedSummary)
+                .sort((a, b) => Math.abs(b[1].total) - Math.abs(a[1].total))
+                .forEach(([desc, stats]) => {
+                    const tr = document.createElement('tr');
+                    const totalStr = formatCurrency(stats.total);
+                    tr.innerHTML = `<td>${desc}</td><td>${stats.count}</td><td style="${stats.total < 0 ? 'color: red;' : ''}">${totalStr}</td>`;
+                    tbody.appendChild(tr);
+                });
+        }
+        setTimeout(() => renderRemovedTable(), 100);
+
+        function resetFilter(fileIdx) {
+            renderTable(fileIdx, null);
+        }
+
+        let currentEdit = null;
+
+        function editCategory(fileIdx, transIdx) {
+            const trans = allData[fileIdx].transactions[transIdx];
+            currentEdit = { fileIdx, transIdx, trans };
+            
+            document.getElementById('modalDesc').innerText = `Editing transaction:\n${trans.description}`;
+            document.getElementById('modalInput').value = trans.category;
+            document.getElementById('modalMatchInput').value = trans.description;
+            
+            document.getElementById('editModal').showModal();
+        }
+
+        function closeEditModal() {
+            document.getElementById('editModal').close();
+            currentEdit = null;
+        }
+
+        function applyCategory(type) {
+            if (!currentEdit) return;
+            const newCat = document.getElementById('modalInput').value.trim();
+            const trans = currentEdit.trans;
+            
+            if (!newCat || newCat === trans.category) {
+                closeEditModal();
+                return;
+            }
+
+            if (type === 'all') {
+                const matchStr = document.getElementById('modalMatchInput').value.trim();
+                if (!matchStr) {
+                    alert("Please provide a substring to match.");
+                    return;
+                }
+                overrides.description_mapping[matchStr] = newCat;
+                allData.forEach(d => {
+                    d.transactions.forEach(t => {
+                        if (t.description.toLowerCase().includes(matchStr.toLowerCase())) {
+                            t.category = newCat;
+                        }
+                    });
+                });
+            } else if (type === 'justThis') {
+                const tId = `${trans.date}|${trans.description}|${parseFloat(trans.amount).toFixed(2)}`;
+                overrides.exact_mapping[tId] = newCat;
+                trans.category = newCat;
+            }
+
+            recomputeAll();
+            closeEditModal();
+            saveOverrides();
+        }
+
+        let currentRemove = null;
+
+        function removeTransaction(fileIdx, transIdx) {
+            const trans = allData[fileIdx].transactions[transIdx];
+            currentRemove = { fileIdx, transIdx, trans };
+            document.getElementById('removeModalDesc').innerText = `Remove this transaction and exclude it from reports?\n\n${trans.description}`;
+            document.getElementById('removeMatchInput').value = trans.description;
+            document.getElementById('removeModal').showModal();
+        }
+
+        function closeRemoveModal() {
+            document.getElementById('removeModal').close();
+            currentRemove = null;
+        }
+
+        function applyRemove(type) {
+            if (!currentRemove) return;
+            const trans = currentRemove.trans;
+            if (type === 'all') {
+                const matchStr = document.getElementById('removeMatchInput').value.trim();
+                if (!matchStr) {
+                    alert("Please provide a substring to match.");
+                    return;
+                }
+                if (!overrides.ignored_descriptions.includes(matchStr)) {
+                    overrides.ignored_descriptions.push(matchStr);
+                }
+            } else if (type === 'justThis') {
+                const tId = `${trans.date}|${trans.description}|${parseFloat(trans.amount).toFixed(2)}`;
+                if (!overrides.ignored_exact.includes(tId)) {
+                    overrides.ignored_exact.push(tId);
+                }
+            }
+            recomputeAll();
+            closeRemoveModal();
+            saveOverrides();
+        }
+
+        function recomputeAll() {
+            allData.forEach(d => {
+                const newTotals = {};
+                let newIncomeTotal = 0;
+                const newIncomeBreakdown = [];
+                let newExpectedTotal = 0;
+                const newExpectedBreakdown = [];
+                
+                d.transactions.forEach(t => {
+                    if (!isIgnored(t)) {
+                        if (t.is_income) {
+                            newIncomeTotal += parseFloat(t.amount);
+                            newIncomeBreakdown.push({ desc: t.description, amount: parseFloat(t.amount) });
+                        } else if (t.category === 'Expected!') {
+                            newExpectedTotal += parseFloat(t.amount);
+                            newExpectedBreakdown.push({ desc: t.description, amount: parseFloat(t.amount) });
+                        } else {
+                            newTotals[t.category] = (newTotals[t.category] || 0) + parseFloat(t.amount);
+                        }
+                    }
+                });
+                d.totals = newTotals;
+                d.income_total = newIncomeTotal;
+                d.income_breakdown = newIncomeBreakdown;
+                d.expected_total = newExpectedTotal;
+                d.expected_breakdown = newExpectedBreakdown;
+            });
+            
+            // Re-render
+            updateGlobalMax();
+            allData.forEach((d, idx) => {
+                renderTable(idx);
+                if (activeMonths.has(d.month)) {
+                    renderChart(idx, d);
+                }
+                updateIncomeDisplay(idx, d);
+            });
+            renderRemovedTable();
+        }
+
+        function saveOverrides() {
+            fetch('/save_overrides', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(overrides, null, 2)
+            }).catch(err => console.error("Error saving overrides:", err));
+        }
+
+        function renderChart(fileIdx, data) {
+            const ctx = document.getElementById(`chart-${fileIdx}`).getContext('2d');
+            const canvas = document.getElementById(`chart-${fileIdx}`);
+            const sankeyDiv = document.getElementById(`sankey-${fileIdx}`);
+            
+            if (currentChartType === 'sankey') {
+                canvas.style.display = 'none';
+                sankeyDiv.style.display = 'block';
+                
+                const incomeAgg = {};
+                (data.income_breakdown || []).forEach(inc => {
+                    incomeAgg[inc.desc] = (incomeAgg[inc.desc] || 0) + parseFloat(inc.amount);
+                });
+                const incomeKeys = Object.keys(incomeAgg);
+                const totalIdx = incomeKeys.length;
+
+                const labels = [...incomeKeys.map(() => ""), "Total", ...Object.keys(data.totals)];
+                const sources = [];
+                const targets = [];
+                const values = [];
+
+                // Inflows from Income
+                incomeKeys.forEach((incKey, i) => {
+                    sources.push(i);
+                    targets.push(totalIdx);
+                    values.push(incomeAgg[incKey]);
+                });
+
+                // Outflows to Expenses
+                Object.values(data.totals).forEach((val, i) => {
+                    sources.push(totalIdx); // From "Total"
+                    targets.push(totalIdx + 1 + i); // To specific category
+                    values.push(Math.abs(val));
+                });
+
+                const sankeyData = [{
+                    type: "sankey",
+                    orientation: "h",
+                    node: {
+                        pad: 15,
+                        thickness: 30,
+                        line: { color: "black", width: 0.5 },
+                        label: labels,
+                        color: [...incomeKeys.map(() => "#16a34a"), "#1e293b", ...Object.keys(data.totals).map(cat => categoryColors[cat])],
+                        hovertemplate: '%{label}<br>$%{value:,.0f}<extra></extra>'
+                    },
+                    link: {
+                        source: sources,
+                        target: targets,
+                        value: values,
+                        hovertemplate: '$%{value:,.0f}<extra></extra>'
+                    }
+                }];
+
+                Plotly.newPlot(`sankey-${fileIdx}`, sankeyData, { margin: { l: 10, r: 10, b: 10, t: 10 } }, { displayModeBar: false });
+                
+                if (sankeyDiv.removeAllListeners) {
+                    sankeyDiv.removeAllListeners('plotly_click');
+                }
+                sankeyDiv.on('plotly_click', (event) => {
+                    if (event.points && event.points.length > 0) {
+                        const pt = event.points[0];
+                        if (pt.label && pt.label !== 'Total') {
+                            renderTable(fileIdx, pt.label);
+                        }
+                    }
+                });
+                return;
+            }
+
+            canvas.style.display = 'block';
+            sankeyDiv.style.display = 'none';
+
+            if (chartInstances[fileIdx]) {
+                chartInstances[fileIdx].destroy();
+            }
+
+            if (currentChartType === 'bar') {
+                const sortedEntries = Object.entries(data.totals)
+                    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+                
+                chartInstances[fileIdx] = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: sortedEntries.map(e => e[0]),
+                        datasets: [{
+                            data: sortedEntries.map(e => Math.abs(e[1])),
+                            backgroundColor: sortedEntries.map(e => categoryColors[e[0]])
+                        }]
+                    },
+                    options: {
+                        maintainAspectRatio: false,
+                        layout: { padding: 20 },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: globalMaxCategory > 0 ? globalMaxCategory : undefined,
+                                ticks: {
+                                    callback: function(value) { return formatCurrency(value); }
+                                }
+                            }
+                        },
+                        onClick: (evt, item, chart) => {
+                            if (item.length > 0) {
+                                const index = item[0].index;
+                                const label = chart.data.labels[index];
+                                renderTable(fileIdx, label);
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const realVal = data.totals[context.label];
+                                        return realVal !== undefined ? formatCurrency(realVal) : '';
+                                    }
+                                }
+                            },
+                            datalabels: { display: false }
+                        }
+                    }
+                });
+                return;
+            }
+
+            // Get top 5 categories for labels
+            const sortedEntries = Object.entries(data.totals)
+                .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+            const top5 = sortedEntries.slice(0, 5).map(e => e[0]);
+
+            chartInstances[fileIdx] = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: Object.keys(data.totals),
+                    datasets: [{
+                        data: Object.values(data.totals).map(v => Math.abs(v)),
+                        backgroundColor: Object.keys(data.totals).map(cat => categoryColors[cat])
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    layout: { padding: 40 },
+                    onClick: (evt, item, chart) => {
+                        if (item.length > 0) {
+                            const index = item[0].index;
+                            const label = chart.data.labels[index];
+                            renderTable(fileIdx, label);
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    const realVal = data.totals[context.label];
+                                    if (realVal !== undefined) {
+                                        label += formatCurrency(realVal);
+                                    }
+                                    return label;
+                                }
+                            }
+                        },
+                        datalabels: {
+                            formatter: (value, ctx) => {
+                                const label = ctx.chart.data.labels[ctx.dataIndex];
+                                return top5.includes(label) ? label : null;
+                            },
+                            color: '#1e293b',
+                            font: { weight: 'bold' },
+                            anchor: 'end',
+                            align: 'end',
+                            offset: 15,
+                            display: (ctx) => {
+                                const label = ctx.chart.data.labels[ctx.dataIndex];
+                                return top5.includes(label);
+                            },
+                            // Add connector lines
+                            listeners: {
+                                render: (context) => {
+                                    const { chart, dataIndex } = context;
+                                    const { ctx } = chart;
+                                    const meta = chart.getDatasetMeta(0).data[dataIndex];
+                                    const { x, y } = meta.tooltipPosition();
+                                    
+                                    // Manually draw line from slice to label
+                                    ctx.strokeStyle = '#94a3b8';
+                                    ctx.lineWidth = 1;
+                                    ctx.beginPath();
+                                    ctx.moveTo(meta.x, meta.y);
+                                    ctx.lineTo(x, y);
+                                    ctx.stroke();
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>

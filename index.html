@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Budget Tracker & Categorizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #1e293b;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            margin: 0;
+            padding: 2rem;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .card {
+            background: var(--card);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+            margin-bottom: 2rem;
+        }
+        h1 { margin-top: 0; font-weight: 800; }
+        .upload-area {
+            border: 2px dashed #cbd5e1;
+            padding: 2rem;
+            text-align: center;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+        .upload-area:hover { border-color: var(--primary); }
+        #fileInput { display: none; }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+        th, td {
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        th { background: #f1f5f9; }
+        .tag {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: #e2e8f0;
+        }
+        @media (max-width: 768px) {
+            .grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>Budget Categorizer</h1>
+            <p>Upload your credit card statement (CSV format). Expects columns: <b>Date, Description, Amount</b>.</p>
+            <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+                <p>Click to select or drag & drop CSV file</p>
+                <input type="file" id="fileInput" accept=".csv">
+            </div>
+        </div>
+
+        <div class="grid" id="results" style="display: none;">
+            <div class="card">
+                <h2>Spending by Category</h2>
+                <canvas id="categoryChart"></canvas>
+            </div>
+            <div class="card">
+                <h2>Transactions</h2>
+                <div style="overflow-x: auto;">
+                    <table id="transactionTable">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Description</th>
+                                <th>Category</th>
+                                <th>Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const categories = {
+            'Dining': [/starbucks/i, /mcdonald/i, /restaurant/i, /burger/i, /taco/i, /pizza/i, /uber eats/i, /doordash/i],
+            'Groceries': [/safeway/i, /walmart/i, /kroger/i, /whole foods/i, /trader joe/i, /target/i, /costco/i],
+            'Transport': [/uber/i, /lyft/i, /gas/i, /chevron/i, /shell/i, /parking/i, /transit/i],
+            'Utilities': [/pge/i, /comcast/i, /at&t/i, /verizon/i, /water/i, /electric/i],
+            'Shopping': [/amazon/i, /apple/i, /best buy/i, /nike/i, /gap/i, /zara/i],
+            'Entertainment': [/netflix/i, /spotify/i, /hulu/i, /disney/i, /steam/i, /cinema/i]
+        };
+
+        function classify(description) {
+            for (const [category, patterns] of Object.entries(categories)) {
+                if (patterns.some(p => p.test(description))) return category;
+            }
+            return 'Other';
+        }
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                processData(text);
+            };
+            reader.readAsText(file);
+        });
+
+        function processData(csvText) {
+            const lines = csvText.split('\n').filter(line => line.trim() !== '');
+            const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+            
+            // Try to find column indices
+            const dateIdx = headers.findIndex(h => h.includes('date'));
+            const descIdx = headers.findIndex(h => h.includes('desc'));
+            const amtIdx = headers.findIndex(h => h.includes('amount'));
+
+            if (dateIdx === -1 || descIdx === -1 || amtIdx === -1) {
+                alert('Could not find Date, Description, and Amount columns in CSV headers.');
+                return;
+            }
+
+            const transactions = lines.slice(1).map(line => {
+                const cols = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/); // Split by comma not inside quotes
+                const amount = parseFloat(cols[amtIdx].replace(/[$,"]/g, ''));
+                const description = cols[descIdx].replace(/"/g, '').trim();
+                
+                return {
+                    date: cols[dateIdx].replace(/"/g, '').trim(),
+                    description: description,
+                    amount: Math.abs(amount), // Assume all listed are expenses for this simple view
+                    category: classify(description)
+                };
+            });
+
+            renderResults(transactions);
+        }
+
+        let chart = null;
+
+        function renderResults(transactions) {
+            document.getElementById('results').style.display = 'grid';
+            
+            // Group by category
+            const totals = {};
+            const tbody = document.querySelector('#transactionTable tbody');
+            tbody.innerHTML = '';
+
+            transactions.forEach(t => {
+                totals[t.category] = (totals[t.category] || 0) + t.amount;
+                
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${t.date}</td>
+                    <td>${t.description}</td>
+                    <td><span class="tag">${t.category}</span></td>
+                    <td>$${t.amount.toFixed(2)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Update Chart
+            const ctx = document.getElementById('categoryChart').getContext('2d');
+            if (chart) chart.destroy();
+            
+            chart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(totals),
+                    datasets: [{
+                        data: Object.values(totals),
+                        backgroundColor: [
+                            '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#475569'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
