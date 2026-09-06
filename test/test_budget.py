@@ -26,9 +26,15 @@ class TestBudgetApp(unittest.TestCase):
         return f"{doc} {'.' * pad}"
 
     def setUp(self):
+        # Save our current directory so we can safely return to it later
+        self.original_cwd = os.getcwd()
+        
         # Setup an isolated temporary directory for file operations
         self.temp_dir = tempfile.TemporaryDirectory()
         self.script_dir = self.temp_dir.name
+        
+        # Strictly sandbox the test by moving into the temporary directory
+        os.chdir(self.script_dir)
         
         # Create a mock CSV file
         self.csv_path = os.path.join(self.script_dir, 'data.csv')
@@ -49,6 +55,8 @@ class TestBudgetApp(unittest.TestCase):
             json.dump(self.overrides, f)
 
     def tearDown(self):
+        # Step out of the sandbox before destroying it
+        os.chdir(self.original_cwd)
         self.temp_dir.cleanup()
 
     @patch('sys.stdout')

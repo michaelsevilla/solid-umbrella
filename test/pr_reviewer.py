@@ -7,8 +7,9 @@ def main():
     repo = os.environ.get("GITHUB_REPOSITORY")
     pr_number = os.environ.get("PR_NUMBER")
     gh_token = os.environ.get("GITHUB_TOKEN")
+    models_token = os.environ.get("GH_MODELS_TOKEN")
 
-    if not all([repo, pr_number, gh_token]):
+    if not all([repo, pr_number, gh_token, models_token]):
         print("Missing required environment variables.")
         sys.exit(1)
 
@@ -24,10 +25,11 @@ def main():
 
     # 2. Define your mandatory checklist
     checklist = """
-    1. Are there unit tests for the new logic?
+    1. Are there unit tests for the core logic? (Testing the CI/CD scripts themselves is not required)
     2. Is the README.md updated if any core functionality changed?
     3. Are there zero hardcoded secrets or credentials?
-    4. Is the code free of debugging print() statements?
+    4. Is the code free of arbitrary debugging print() statements? (Error handling prints are fine)
+    5. Are comments a single line only? Is there excessive jargon in comments?
     """
     
     prompt = f"""
@@ -43,13 +45,13 @@ def main():
     """
 
     # 3. Analyze the diff with GitHub Models API (gpt-4o-mini)
-    ai_url = "https://models.inference.ai.azure.com/chat/completions"
+    ai_url = "https://models.github.ai/inference/chat/completions"
     ai_headers = {
-        "Authorization": f"Bearer {gh_token}",
+        "Authorization": f"Bearer {models_token}",
         "Content-Type": "application/json"
     }
     ai_data = {
-        "model": "gpt-4o-mini",
+        "model": "openai/gpt-4o-mini",
         "messages": [
             {"role": "system", "content": "You are a code reviewer that outputs ONLY valid JSON."},
             {"role": "user", "content": prompt}
@@ -63,10 +65,13 @@ def main():
         sys.exit(1)
 
     try:
-        content = ai_resp.json()["choices"][0]["message"]["content"]
+        content = ai_resp.json()["choices"][0]["message"]["content"].strip()
+        if content.startswith("```"):
+            # Strip markdown formatting if the AI ignores our JSON instructions
+            content = content.strip("`").removeprefix("json").strip()
         result = json.loads(content)
     except (KeyError, json.JSONDecodeError):
-        print("Failed to parse AI response as JSON.")
+        print(f"Failed to parse AI response as JSON. Raw response: {content}")
         sys.exit(1)
 
     passed = result.get("passed", False)
