@@ -25,7 +25,9 @@ A lightweight, interactive local web application to visualize and analyze your p
 ├── overrides.json      # User-specific categorization rules and ignored transactions
 ├── README.md           # This documentation file
 ├── report.html         # The generated output dashboard (created by budget.py)
-└── template.html       # HTML/JS/CSS frontend template for the dashboard
+├── template.html       # HTML/JS/CSS frontend template for the dashboard
+└── test/               # Directory containing automated unit tests
+    └── test_budget.py  # Unit tests verifying file parsing and categorization logic
 ```
 
 **Note on Ignored Files:** Our `.gitignore` intentionally excludes `*.csv`, `*.json` (like `overrides.json`), and `report.html`. We did this because these files are highly user-specific and contain private financial data. The CSVs are your personal checking and credit card statements, the overrides contain your personal custom categorization rules, and the generated report is your specific financial output dashboard.
