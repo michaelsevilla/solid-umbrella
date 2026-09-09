@@ -2,14 +2,16 @@ import os
 import sys
 import json
 import requests
+from google import genai
+from google.genai import types
 
 def main():
     repo = os.environ.get("GITHUB_REPOSITORY")
     pr_number = os.environ.get("PR_NUMBER")
     gh_token = os.environ.get("GITHUB_TOKEN")
-    models_token = os.environ.get("GH_MODELS_TOKEN")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
 
-    if not all([repo, pr_number, gh_token, models_token]):
+    if not all([repo, pr_number, gh_token, gemini_key]):
         print("Missing required environment variables.")
         sys.exit(1)
 
@@ -44,34 +46,18 @@ def main():
     - "comment": string (Detailed markdown-formatted feedback explaining what passed, what failed, and why)
     """
 
-    # 3. Analyze the diff with GitHub Models API (gpt-4o-mini)
-    ai_url = "https://models.github.ai/inference/chat/completions"
-    ai_headers = {
-        "Authorization": f"Bearer {models_token}",
-        "Content-Type": "application/json"
-    }
-    ai_data = {
-        "model": "openai/gpt-4o-mini",
-        "messages": [
-            {"role": "system", "content": "You are a code reviewer that outputs ONLY valid JSON."},
-            {"role": "user", "content": prompt}
-        ],
-        "response_format": {"type": "json_object"}
-    }
-
-    ai_resp = requests.post(ai_url, headers=ai_headers, json=ai_data)
-    if not ai_resp.ok:
-        print(f"Failed to get AI review: {ai_resp.text}")
-        sys.exit(1)
+    # 3. Analyze the diff with Gemini
+    client = genai.Client(api_key=gemini_key)
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt,
+        config=types.GenerateContentConfig(response_mime_type="application/json")
+    )
 
     try:
-        content = ai_resp.json()["choices"][0]["message"]["content"].strip()
-        if content.startswith("```"):
-            # Strip markdown formatting if the AI ignores our JSON instructions
-            content = content.strip("`").removeprefix("json").strip()
-        result = json.loads(content)
-    except (KeyError, json.JSONDecodeError):
-        print(f"Failed to parse AI response as JSON. Raw response: {content}")
+        result = json.loads(response.text)
+    except json.JSONDecodeError:
+        print(f"Failed to parse AI response as JSON. Raw response: {response.text}")
         sys.exit(1)
 
     passed = result.get("passed", False)
