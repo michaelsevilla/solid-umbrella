@@ -7,7 +7,11 @@ A lightweight, interactive local web application to visualize and analyze your p
 ## Features
 - **Multi-Account Support:** Feed it multiple CSVs (checking, savings, credit cards) and it will combine them into seamless monthly views.
 - **Interactive Visuals:** Toggle between pie charts and Sankey "Cash Flow" diagrams to see where your money is going.
-- **Dynamic Overrides:** Edit categories or ignore transactions directly in the browser. Changes are instantly saved back to your local `overrides.json` file to persist across future runs.
+- **Live UI Updates:** Edit categories, move transactions, or create overrides directly in the browser. The UI reloads instantly without a server restart.
+- **Granular Transaction Control:**
+    - **Categorize:** Change the category for a single transaction or all future ones.
+    - **Move:** Correct posting dates by moving a transaction to a different month with a single click.
+    - **Rename:** Clean up recurring "Expected!" expenses (e.g., rename "Bilt Rewards Pmt" to "Mortgage").
 - **Smart Sorting:** Click table headers to sort by amount, description, or category.
 - **Income Tracking:** Automatically detects payroll deposits (e.g. AMD, Palomar) and breaks them down at the top of the monthly reports.
 
