@@ -5,6 +5,21 @@ import os
 import http.server
 from datetime import datetime
 
+def get_short_income_desc(desc):
+    """Create a shorter, more readable description for an income source."""
+    desc_lower = desc.lower()
+    # Keywords that often separate the company name from transaction details
+    separators = ['payroll', 'ppd id', 'direct dep', 'payment']
+    for sep in separators:
+        idx = desc_lower.find(sep)
+        # Ensure separator is found and is not at the very beginning of the string.
+        if idx > 0:
+            # Take the substring before the separator and clean it up.
+            short_desc = desc[:idx].strip().rstrip('-_ ')
+            if short_desc:
+                return short_desc
+    return desc
+
 def generate_html(all_data, overrides):
     data_json = json.dumps(all_data)
     overrides_json = json.dumps(overrides)
@@ -28,6 +43,23 @@ def generate_html(all_data, overrides):
     print(f"Report generated: {os.path.abspath('report.html')}")
 
 class BudgetHandler(http.server.SimpleHTTPRequestHandler):
+    csv_files = [] # Class attribute to hold csv file paths
+
+    def do_GET(self):
+        if self.path == '/data':
+            try:
+                all_data, overrides = process_files(self.csv_files)
+                response_data = json.dumps({'data': all_data, 'overrides': overrides})
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(response_data.encode('utf-8'))
+            except Exception as e:
+                self.send_error(500, f"Error processing data: {e}")
+            return
+        
+        return http.server.SimpleHTTPRequestHandler.do_GET(self)
+
     def do_POST(self):
         if self.path == '/save_overrides':
             content_length = int(self.headers.get('Content-Length', 0))
@@ -45,22 +77,20 @@ class BudgetHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python budget.py <csv_file1> <csv_file2> ...")
-        sys.exit(1)
-
+def process_files(csv_files):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     overrides_file = os.path.join(script_dir, 'overrides.json')
     if not os.path.exists(overrides_file):
         overrides_file = 'overrides.json'  # Fallback to current working directory
 
-    overrides = {'description_mapping': {}, 'exact_mapping': {}, 'ignored_descriptions': [], 'ignored_exact': []}
+    overrides = {'description_mapping': {}, 'exact_mapping': {}, 'ignored_descriptions': [], 'ignored_exact': [], 'moved_transactions': {}, 'expected_rename_mapping': {}}
     if os.path.exists(overrides_file):
         try:
             with open(overrides_file, 'r') as f:
                 loaded_overrides = json.load(f)
                 overrides.update(loaded_overrides)
+                if 'expected_rename_mapping' not in overrides: overrides['expected_rename_mapping'] = {}
+                if 'moved_transactions' not in overrides: overrides['moved_transactions'] = {}
                 if 'ignored_descriptions' not in overrides: overrides['ignored_descriptions'] = []
                 if 'ignored_exact' not in overrides: overrides['ignored_exact'] = []
         except Exception as e:
@@ -68,7 +98,7 @@ def main():
 
     monthly_data = {}
 
-    for csv_filename in sys.argv[1:]:
+    for csv_filename in csv_files:
         try:
             with open(csv_filename, mode='r', encoding='utf-8-sig') as f:
                 reader = csv.DictReader(f)
@@ -140,8 +170,12 @@ def main():
                     if amt > 0 and any(kw in desc_lower for kw in ['amd', 'advanced micro', 'palomar', 'trinet', 'payroll']):
                         is_income = True
 
-                    t_id = f"{date_val}|{desc}|{amt:.2f}"
-                    
+                    t_id = f"{date_val}|{desc}|{amt:.2f}" 
+
+                    # Check for move override and apply it if it exists
+                    if t_id in overrides.get('moved_transactions', {}):
+                        month_key = overrides['moved_transactions'][t_id]
+
                     is_ignored = False
                     if t_id in overrides.get('ignored_exact', []):
                         is_ignored = True
@@ -192,21 +226,44 @@ def main():
                     monthly_data[month_key]['transactions'].append(t)
                     if not is_ignored:
                         if is_income:
+                            short_desc = get_short_income_desc(desc)
                             monthly_data[month_key]['income_total'] += amt
-                            monthly_data[month_key]['income_breakdown'].append({'desc': desc, 'amount': amt})
+                            monthly_data[month_key]['income_breakdown'].append({'desc': desc, 'short_desc': short_desc, 'amount': amt})
                         elif cat == 'Expected!':
+                            # Add to totals so it appears in charts like Sankey
+                            monthly_data[month_key]['totals'][cat] = monthly_data[month_key]['totals'].get(cat, 0) + amt
+
+                            display_desc = desc
+                            rule_pattern = None
+                            for pattern, new_name in overrides.get('expected_rename_mapping', {}).items():
+                                if pattern and pattern.lower() in desc.lower():
+                                    display_desc = new_name
+                                    rule_pattern = pattern
+                                    break
+
                             monthly_data[month_key]['expected_total'] += amt
-                            monthly_data[month_key]['expected_breakdown'].append({'desc': desc, 'amount': amt})
+                            monthly_data[month_key]['expected_breakdown'].append({'desc': display_desc, 'original_desc': desc, 'amount': amt, 'rule_pattern': rule_pattern})
                         else:
                             monthly_data[month_key]['totals'][cat] = monthly_data[month_key]['totals'].get(cat, 0) + amt
         except Exception as e:
             print(f"Skipping {csv_filename} due to error: {e}")
 
-    all_data = [monthly_data[k] for k in sorted(monthly_data.keys(), reverse=True)]
+    all_data = [monthly_data[k] for k in sorted(monthly_data.keys(), reverse=True)] if monthly_data else []
+    return all_data, overrides
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python budget.py <csv_file1> <csv_file2> ...")
+        sys.exit(1)
+
+    csv_files = sys.argv[1:]
+    BudgetHandler.csv_files = csv_files # Set class attribute for the handler
+
+    all_data, overrides = process_files(csv_files)
 
     if all_data:
         generate_html(all_data, overrides)
-        
+
         PORT = 8000
         while True:
             try:
@@ -219,14 +276,14 @@ def main():
                 else:
                     raise
         
-        print(f"Starting local interactive server...")
+        print(f"\nStarting local interactive server...")
         print(f"Open http://localhost:{PORT}/report.html in your browser.")
         print("Press Ctrl+C to stop.")
         
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
-            print("\nShutting down server.")
+            print("\n\nShutting down server.")
             httpd.server_close()
     else:
         print("No data processed.")

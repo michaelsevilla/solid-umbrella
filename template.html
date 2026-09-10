@@ -140,6 +140,7 @@
             </div>
         </div>
     </div>
+    <div id="dynamicContent"></div>
 
     <dialog id="editModal">
         <h3 style="margin-top: 0; margin-bottom: 1rem;">Edit Category</h3>
@@ -167,16 +168,43 @@
         </div>
     </dialog>
 
+    <dialog id="moveModal">
+        <h3 style="margin-top: 0; margin-bottom: 1rem;">Move Transaction</h3>
+        <p id="moveModalDesc" style="margin-bottom: 1rem; white-space: pre-wrap; font-size: 0.875rem;"></p>
+        <label for="moveModalInput" style="font-size: 0.75rem; font-weight: bold; color: #475569;">Target Month (YYYY-MM)</label>
+        <input type="text" id="moveModalInput" placeholder="e.g., 2023-06" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <div class="modal-buttons">
+            <button class="btn btn-cancel" onclick="closeMoveModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="applyMove()">Move</button>
+        </div>
+    </dialog>
+
+    <dialog id="renameModal">
+        <h3 style="margin-top: 0; margin-bottom: 1rem;">Rename Expected Expense</h3>
+        <p style="font-size: 0.875rem; color: #475569; margin-bottom: 1rem;">This creates a rule to rename items in the "Expected!" category for display in tooltips.</p>
+        <label for="renameMatchInput" style="font-size: 0.75rem; font-weight: bold; color: #475569;">When description contains:</label>
+        <input type="text" id="renameMatchInput" placeholder="e.g., Bilt" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <label for="renameNewNameInput" style="font-size: 0.75rem; font-weight: bold; color: #475569;">Rename to:</label>
+        <input type="text" id="renameNewNameInput" placeholder="e.g., Mortgage Payment" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <div class="modal-buttons">
+            <button class="btn btn-cancel" onclick="closeRenameModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="applyRename()">Save Rule</button>
+        </div>
+    </dialog>
+
     <script>
         Chart.register(ChartDataLabels);
         const overrides = __OVERRIDES_JSON__;
-        const allData = __DATA_JSON__;
-        const container = document.getElementById('reportContainer');
-        const chartInstances = {};
+        let allData = __DATA_JSON__;
+        const reportContainer = document.getElementById('reportContainer');
+        const dynamicContent = document.getElementById('dynamicContent');
+        let chartInstances = {};
         let currentChartType = 'pie';
         let globalMaxCategory = 0;
-        const currentFilters = {};
-        const currentSorts = {};
+        let currentFilters = {};
+        let currentSorts = {};
+        let currentRename = null;
+        let activeMonths = new Set();
 
         function updateGlobalMax() {
             globalMaxCategory = 0;
@@ -188,7 +216,6 @@
                 });
             });
         }
-        updateGlobalMax();
 
         function setChartType(type) {
             currentChartType = type;
@@ -214,9 +241,6 @@
             return desc.length > 20 ? desc.substring(0, 20) + '...' : desc;
         }
 
-        overrides.ignored_descriptions = overrides.ignored_descriptions || [];
-        overrides.ignored_exact = overrides.ignored_exact || [];
-
         function isIgnored(t) {
             const tId = `${t.date}|${t.description}|${parseFloat(t.amount).toFixed(2)}`;
             if (overrides.ignored_exact.includes(tId)) return true;
@@ -224,85 +248,114 @@
             return overrides.ignored_descriptions.some(d => descLower.includes(d.toLowerCase()));
         }
         
-        // Generate consistent colors for categories across all files
-        const colorPalette = [
-            '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#475569',
-            '#06b6d4', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6', '#f59e0b', '#3b82f6'
-        ];
-        const categoryColors = {};
-        let colorIdx = 0;
-        allData.forEach(d => {
-            Object.keys(d.totals).forEach(cat => {
-                if (!categoryColors[cat]) {
-                    categoryColors[cat] = colorPalette[colorIdx % colorPalette.length];
-                    colorIdx++;
-                }
+        function renderPage(data, ovrs) {
+            window.allData = data;
+            window.overrides = ovrs;
+
+            // Ensure all override keys exist
+            overrides.ignored_descriptions = overrides.ignored_descriptions || [];
+            overrides.ignored_exact = overrides.ignored_exact || [];
+            overrides.moved_transactions = overrides.moved_transactions || {};
+            overrides.expected_rename_mapping = overrides.expected_rename_mapping || {};
+
+            // Clear previous content and reset state
+            dynamicContent.innerHTML = '';
+            Object.values(chartInstances).forEach(chart => chart.destroy());
+            chartInstances = {};
+            currentFilters = {};
+            currentSorts = {};
+            
+            // Keep active months if they still exist, otherwise default
+            const existingMonths = new Set(allData.map(d => d.month));
+            activeMonths = new Set([...activeMonths].filter(m => existingMonths.has(m)));
+            if (activeMonths.size === 0) {
+                activeMonths = new Set(allData.slice(0, 3).map(d => d.month));
+            }
+
+            updateGlobalMax();
+
+            // Generate consistent colors for categories across all files
+            const colorPalette = [
+                '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#475569',
+                '#06b6d4', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6', '#f59e0b', '#3b82f6'
+            ];
+            const categoryColors = {};
+            let colorIdx = 0;
+            allData.forEach(d => {
+                Object.keys(d.totals).forEach(cat => {
+                    if (!categoryColors[cat]) {
+                        categoryColors[cat] = colorPalette[colorIdx % colorPalette.length];
+                        colorIdx++;
+                    }
+                });
             });
-        });
+            window.categoryColors = categoryColors; // Make it accessible to renderChart
 
-        // Setup default 3 months
-        const activeMonths = new Set();
-        allData.slice(0, 3).forEach(d => activeMonths.add(d.month));
+            // Create month filter buttons
+            const monthFilterContainer = document.createElement('div');
+            monthFilterContainer.style.cssText = 'display: flex; gap: 0.5rem; margin-bottom: 2rem; flex-wrap: wrap;';
+            
+            allData.forEach(d => {
+                const btn = document.createElement('button');
+                btn.innerText = d.month;
+                btn.className = 'btn';
+                btn.style.backgroundColor = activeMonths.has(d.month) ? 'var(--primary)' : '#e2e8f0';
+                btn.style.color = activeMonths.has(d.month) ? 'white' : '#475569';
+                btn.onclick = () => {
+                    if (activeMonths.has(d.month)) {
+                        activeMonths.delete(d.month);
+                        btn.style.backgroundColor = '#e2e8f0';
+                        btn.style.color = '#475569';
+                    } else {
+                        activeMonths.add(d.month);
+                        btn.style.backgroundColor = 'var(--primary)';
+                        btn.style.color = 'white';
+                    }
+                    toggleMonthVisibility();
+                };
+                monthFilterContainer.appendChild(btn);
+            });
+            dynamicContent.appendChild(monthFilterContainer);
 
-        // Create month filter buttons
-        const monthFilterContainer = document.createElement('div');
-        monthFilterContainer.style.display = 'flex';
-        monthFilterContainer.style.gap = '0.5rem';
-        monthFilterContainer.style.marginBottom = '2rem';
-        monthFilterContainer.style.flexWrap = 'wrap';
-        
-        allData.forEach(d => {
-            const btn = document.createElement('button');
-            btn.innerText = d.month;
-            btn.className = 'btn';
-            btn.style.backgroundColor = activeMonths.has(d.month) ? 'var(--primary)' : '#e2e8f0';
-            btn.style.color = activeMonths.has(d.month) ? 'white' : '#475569';
-            btn.onclick = () => {
-                if (activeMonths.has(d.month)) {
-                    activeMonths.delete(d.month);
-                    btn.style.backgroundColor = '#e2e8f0';
-                    btn.style.color = '#475569';
-                } else {
-                    activeMonths.add(d.month);
-                    btn.style.backgroundColor = 'var(--primary)';
-                    btn.style.color = 'white';
-                }
-                toggleMonthVisibility();
-            };
-            monthFilterContainer.appendChild(btn);
-        });
-        container.appendChild(monthFilterContainer);
+            const monthsWrapper = document.createElement('div');
+            monthsWrapper.style.cssText = 'display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 2rem; margin-bottom: 2rem; padding-bottom: 1rem;';
+            dynamicContent.appendChild(monthsWrapper);
 
-        const monthsWrapper = document.createElement('div');
-        monthsWrapper.style.display = 'flex';
-        monthsWrapper.style.flexWrap = 'nowrap';
-        monthsWrapper.style.overflowX = 'auto';
-        monthsWrapper.style.gap = '2rem';
-        monthsWrapper.style.marginBottom = '2rem';
-        monthsWrapper.style.paddingBottom = '1rem';
-        container.appendChild(monthsWrapper);
+            const bottomTablesContainer = document.createElement('div');
+            bottomTablesContainer.style.cssText = 'display: flex; gap: 2rem; align-items: flex-start; margin-top: 4rem;';
+            dynamicContent.appendChild(bottomTablesContainer);
 
-        const removedWrapper = document.createElement('div');
-        removedWrapper.className = 'card';
-        removedWrapper.style.marginTop = '4rem';
-        removedWrapper.innerHTML = `
-            <h2>Removed Transactions</h2>
-            <div style="max-height: 400px; overflow-y: auto;">
-                <table id="removedTable">
-                    <thead>
-                        <tr>
-                            <th>Description</th>
-                            <th>Times Removed</th>
-                            <th>Total Amount</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-        `;
-        container.appendChild(removedWrapper);
+            const removedContainer = document.createElement('div');
+            removedContainer.style.flex = '1';
+            const removedWrapper = document.createElement('div');
+            removedWrapper.className = 'card';
+            removedWrapper.innerHTML = `
+                <h2>Removed Transactions</h2>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table id="removedTable">
+                        <thead><tr><th>Description</th><th>Total Amount</th><th style="width: 80px;">Action</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>`;
+            removedContainer.appendChild(removedWrapper);
+            bottomTablesContainer.appendChild(removedContainer);
 
-        allData.forEach((data, fileIdx) => {
+            const overridesContainer = document.createElement('div');
+            overridesContainer.style.flex = '1';
+            const overridesWrapper = document.createElement('div');
+            overridesWrapper.className = 'card';
+            overridesWrapper.innerHTML = `
+                <h2 style="margin-bottom: 1.5rem;">User Overrides</h2>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    <table id="overridesTable">
+                        <thead><tr><th>Override Rule</th><th style="width: 80px; text-align: center;">Action</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>`;
+            overridesContainer.appendChild(overridesWrapper);
+            bottomTablesContainer.appendChild(overridesContainer);
+
+            allData.forEach((data, fileIdx) => {
             const monthCol = document.createElement('div');
             monthCol.id = `monthCol-${fileIdx}`;
             monthCol.style.flex = '0 0 450px';
@@ -315,22 +368,18 @@
             chartCard.style.marginBottom = '0';
             chartCard.innerHTML = `
                 <h2>${data.month}</h2>
-                <div style="display: flex; justify-content: center; align-items: center; gap: 0.75rem; margin-top: -1rem; margin-bottom: 1.5rem;">
-                    <div class="income-tooltip-container" id="income-container-${fileIdx}" style="display: none;">
-                        <span id="income-${fileIdx}" style="color: #16a34a; font-size: 1.25rem; font-weight: bold; cursor: default;"></span>
-                        <div class="income-tooltip-text" id="income-tooltip-${fileIdx}"></div>
-                    </div>
-                    <div class="income-tooltip-container" id="expected-container-${fileIdx}" style="display: none;">
-                        <span id="expected-${fileIdx}" style="color: #ef4444; font-size: 1.25rem; font-weight: bold; cursor: default;"></span>
-                        <div class="income-tooltip-text" id="expected-tooltip-${fileIdx}"></div>
-                    </div>
-                    <div class="income-tooltip-container" id="net-container-${fileIdx}" style="display: none;">
-                        <span id="net-${fileIdx}" style="color: #1e293b; font-size: 1.25rem; font-weight: bold; cursor: default;"></span>
-                    </div>
-                </div>
                 <div class="chart-container">
                     <canvas id="chart-${fileIdx}"></canvas>
                     <div id="sankey-${fileIdx}" style="display: none; width: 100%; height: 100%;"></div>
+                </div>
+                <div id="spending-summary-${fileIdx}" style="text-align: center; font-weight: bold; margin-top: 1rem; font-size: 1.1rem;"></div>
+                <div id="expected-table-container-${fileIdx}" style="margin-top: 1.5rem; display: none;">
+                    <h4 style="margin-bottom: 0.5rem; font-size: 0.9rem; color: #475569; padding-left: 0.5rem;">Expected Expenses</h4>
+                    <div style="max-height: 200px; overflow-y: auto;">
+                        <table id="expected-table-${fileIdx}" style="font-size: 0.8rem;">
+                            <tbody></tbody>
+                        </table>
+                    </div>
                 </div>
             `;
             monthCol.appendChild(chartCard);
@@ -338,13 +387,15 @@
             const tableCard = document.createElement('div');
             tableCard.className = 'card';
             tableCard.style.marginBottom = '0';
-            tableCard.style.flex = '1';
+            tableCard.style.flex = '1'; // Make table card grow
+            tableCard.style.display = 'flex';
+            tableCard.style.flexDirection = 'column';
             tableCard.innerHTML = `
                 <div class="filter-info">
                     <h3 id="title-${fileIdx}">${data.month} - Transactions</h3>
                     <span class="clear-filter" id="clear-${fileIdx}" onclick="resetFilter(${fileIdx})">Clear Filter</span>
                 </div>
-                <div style="max-height: 500px; overflow-y: auto;">
+                <div style="max-height: 500px; overflow-y: auto; flex: 1;">
                     <table id="table-${fileIdx}">
                         <thead>
                             <tr>
@@ -362,9 +413,18 @@
             monthsWrapper.appendChild(monthCol);
 
             renderTable(fileIdx);
-            renderChart(fileIdx, data);
             updateIncomeDisplay(fileIdx, data);
+            renderExpectedTable(fileIdx, data);
+            // Initial chart render for visible months
+            if (activeMonths.has(data.month)) {
+                renderChart(fileIdx, data);
+            }
         });
+
+        toggleMonthVisibility();
+        renderRemovedTable();
+        renderOverridesTable();
+        }
 
         function updateIncomeDisplay(fileIdx, data) {
             const contInc = document.getElementById(`income-container-${fileIdx}`);
@@ -404,6 +464,57 @@
             } else {
                 contNet.style.display = 'none';
             }
+
+            const summaryEl = document.getElementById(`spending-summary-${fileIdx}`);
+            if (!summaryEl) return;
+
+            // "totalSpending" now includes "Expected!" because it's in the `totals` object.
+            const totalSpending = Math.abs(Object.values(data.totals).reduce((sum, val) => sum + val, 0));
+            const emoji = totalSpending > incTotal ? '😞' : '😊';
+            const actualLeftover = incTotal - totalSpending;
+
+            summaryEl.innerHTML = `Spending this month = ${formatCurrency(totalSpending)} ${emoji}`;
+            summaryEl.title = `Actual leftover this month: ${formatCurrency(actualLeftover)}`;
+        }
+
+        function renderExpectedTable(fileIdx, data) {
+            const container = document.getElementById(`expected-table-container-${fileIdx}`);
+            const tbody = document.querySelector(`#expected-table-${fileIdx} tbody`);
+
+            if (!container || !tbody || !data.expected_breakdown || data.expected_breakdown.length === 0) {
+                if (container) container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+            tbody.innerHTML = '';
+
+            data.expected_breakdown.forEach(exp => {
+                const tr = document.createElement('tr');
+                tr.style.border = 'none';
+
+                const descTd = document.createElement('td');
+                descTd.innerText = exp.desc;
+                descTd.style.padding = '0.25rem 0.5rem';
+                descTd.style.border = 'none';
+
+                const amountTd = document.createElement('td');
+                amountTd.innerText = formatCurrency(exp.amount);
+                amountTd.style.cssText = 'padding: 0.25rem 0.5rem; border: none; text-align: right; font-weight: bold; color: #ef4444;';
+
+                const actionTd = document.createElement('td');
+                actionTd.style.cssText = 'padding: 0.25rem 0.5rem; border: none; width: 40px; text-align: center;';
+                
+                const pencil = document.createElement('span');
+                pencil.innerHTML = '✏️';
+                pencil.style.cursor = 'pointer';
+                pencil.title = 'Rename this expected expense';
+                pencil.onclick = () => openRenameModal(exp.rule_pattern || exp.original_desc, exp.desc);
+                actionTd.appendChild(pencil);
+                
+                tr.append(descTd, amountTd, actionTd);
+                tbody.appendChild(tr);
+            });
         }
 
         function toggleMonthVisibility() {
@@ -420,7 +531,6 @@
                 }
             });
         }
-        toggleMonthVisibility();
 
         function renderTable(fileIdx, filterCategory) {
             const data = allData[fileIdx];
@@ -488,8 +598,11 @@
                     <td><span class="tag">${t.category}</span></td>
                     <td style="${colorStyle}">${amountStr}</td>
                     <td>
-                        <span style="cursor: pointer; font-size: 0.85rem;" onclick="editCategory(${fileIdx}, ${origIdx})" title="Edit category">✏️</span>
-                        <span style="cursor: pointer; font-size: 0.85rem; margin-left: 12px;" onclick="removeTransaction(${fileIdx}, ${origIdx})" title="Remove transaction">❌</span>
+                        <div style="display: flex; gap: 12px; align-items: center;">
+                            <span style="cursor: pointer; font-size: 0.85rem;" onclick="editCategory(${fileIdx}, ${origIdx})" title="Edit category">✏️</span> 
+                            <span style="cursor: pointer; font-size: 0.85rem;" onclick="openMoveModal(${fileIdx}, ${origIdx})" title="Move transaction to another month">📅</span>
+                            <span style="cursor: pointer; font-size: 0.85rem;" onclick="removeTransaction(${fileIdx}, ${origIdx})" title="Remove transaction">❌</span>
+                        </div>
                     </td>
                 `;
                 tbody.appendChild(tr);
@@ -513,15 +626,19 @@
             tbody.innerHTML = '';
             const removedSummary = {};
             
+            // Aggregate ignored descriptions
             allData.forEach(d => {
                 d.transactions.forEach(t => {
-                    if (isIgnored(t)) {
-                        const key = t.description;
-                        if (!removedSummary[key]) {
-                            removedSummary[key] = { count: 0, total: 0 };
+                    const descLower = t.description.toLowerCase();
+                    const isIgnoredByDesc = (overrides.ignored_descriptions || []).some(ignored => descLower.includes(ignored.toLowerCase()));
+                    if (isIgnoredByDesc) {
+                        const matchingRule = (overrides.ignored_descriptions || []).find(ignored => descLower.includes(ignored.toLowerCase()));
+                        if (matchingRule) {
+                            if (!removedSummary[matchingRule]) {
+                                removedSummary[matchingRule] = { total: 0 };
+                            }
+                            removedSummary[matchingRule].total += parseFloat(t.amount);
                         }
-                        removedSummary[key].count += 1;
-                        removedSummary[key].total += parseFloat(t.amount);
                     }
                 });
             });
@@ -531,11 +648,87 @@
                 .forEach(([desc, stats]) => {
                     const tr = document.createElement('tr');
                     const totalStr = formatCurrency(stats.total);
-                    tr.innerHTML = `<td>${desc}</td><td>${stats.count}</td><td style="${stats.total < 0 ? 'color: red;' : ''}">${totalStr}</td>`;
+                    tr.innerHTML = `<td>Ignored when description contains: "<em>${desc}</em>"</td><td style="${stats.total < 0 ? 'color: red;' : ''}">${totalStr}</td>`;
+                    
+                    const actionTd = document.createElement('td');
+                    const readdBtn = document.createElement('button');
+                    readdBtn.className = 'btn btn-cancel';
+                    readdBtn.style.padding = '2px 8px';
+                    readdBtn.innerText = 'Re-add';
+                    readdBtn.title = `Stop ignoring transactions with "${desc}"`;
+                    readdBtn.onclick = () => reAddTransaction(desc);
+                    actionTd.appendChild(readdBtn);
+                    tr.appendChild(actionTd);
+
                     tbody.appendChild(tr);
                 });
         }
-        setTimeout(() => renderRemovedTable(), 100);
+
+        function renderOverridesTable() {
+            const tbody = document.querySelector('#overridesTable tbody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+
+            const createRow = (text, type, key) => {
+                const tr = document.createElement('tr');
+                const ruleTd = document.createElement('td');
+                ruleTd.innerHTML = text;
+                tr.appendChild(ruleTd);
+
+                const actionTd = document.createElement('td');
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-cancel';
+                deleteBtn.style.padding = '2px 8px';
+                deleteBtn.innerText = 'Delete';
+                deleteBtn.onclick = () => deleteOverride(type, key);
+                actionTd.appendChild(deleteBtn);
+                tr.appendChild(actionTd);
+                return tr;
+            };
+
+            Object.entries(overrides.moved_transactions || {}).forEach(([tId, newMonth]) => {
+                const desc = tId.split('|')[1];
+                const ruleText = `Move "<em>${truncateDesc(desc)}</em>" to <strong>${newMonth}</strong>`;
+                tbody.appendChild(createRow(ruleText, 'move', tId));
+            });
+
+            Object.entries(overrides.description_mapping || {}).forEach(([desc, cat]) => {
+                const ruleText = `Recategorize "<em>${truncateDesc(desc)}</em>" as <strong>${cat}</strong>`;
+                tbody.appendChild(createRow(ruleText, 'desc', desc));
+            });
+
+            Object.entries(overrides.exact_mapping || {}).forEach(([tId, cat]) => {
+                const desc = tId.split('|')[1];
+                const ruleText = `Recategorize specific "<em>${truncateDesc(desc)}</em>" as <strong>${cat}</strong>`;
+                tbody.appendChild(createRow(ruleText, 'exact', tId));
+            });
+
+            Object.entries(overrides.expected_rename_mapping || {}).forEach(([matchStr, newName]) => {
+                const ruleText = `Rename "Expected!" containing "<em>${truncateDesc(matchStr)}</em>" to <strong>${newName}</strong>`;
+                tbody.appendChild(createRow(ruleText, 'rename', matchStr));
+            });
+        }
+
+        function deleteOverride(type, key) {
+            let changed = false;
+            if (type === 'move' && overrides.moved_transactions[key]) {
+                delete overrides.moved_transactions[key];
+                changed = true;
+            } else if (type === 'desc' && overrides.description_mapping[key]) {
+                delete overrides.description_mapping[key];
+                changed = true;
+            } else if (type === 'exact' && overrides.exact_mapping[key]) {
+                delete overrides.exact_mapping[key];
+                changed = true;
+            } else if (type === 'rename' && overrides.expected_rename_mapping[key]) {
+                delete overrides.expected_rename_mapping[key];
+                changed = true;
+            }
+
+            if (changed) {
+                saveOverridesAndReload();
+            }
+        }
 
         function resetFilter(fileIdx) {
             renderTable(fileIdx, null);
@@ -589,9 +782,77 @@
                 trans.category = newCat;
             }
 
-            recomputeAll();
             closeEditModal();
-            saveOverrides();
+            saveOverridesAndReload();
+        }
+
+        function openRenameModal(matchSuggestion, currentName) {            
+            // If a rule exists, the suggestion is the pattern. Otherwise, it's the full original description.
+            const isExistingRule = overrides.expected_rename_mapping.hasOwnProperty(matchSuggestion);
+            currentRename = { originalKey: isExistingRule ? matchSuggestion : null };
+
+            document.getElementById('renameMatchInput').value = matchSuggestion || '';
+            
+            // The new name is only pre-filled if it's different from the original description, which implies a rule is active.
+            const isCustomName = currentName && currentName !== matchSuggestion;
+            document.getElementById('renameNewNameInput').value = isCustomName ? currentName : '';
+
+            document.getElementById('renameModal').showModal();
+        }
+
+        function closeRenameModal() {
+            document.getElementById('renameModal').close();
+            currentRename = null;
+        }
+
+        function applyRename() {
+            const matchStr = document.getElementById('renameMatchInput').value.trim();
+            const newName = document.getElementById('renameNewNameInput').value.trim();
+
+            if (!matchStr) {
+                alert('Please fill out both fields to create a rename rule.');
+                return;
+            }
+
+            // If we were editing an existing rule and the key (match string) has changed, remove the old rule.
+            if (currentRename && currentRename.originalKey && currentRename.originalKey !== matchStr) {
+                delete overrides.expected_rename_mapping[currentRename.originalKey];
+            }
+            overrides.expected_rename_mapping[matchStr] = newName;
+            saveOverridesAndReload();
+            closeRenameModal();
+        }
+
+        let currentMove = null;
+        function openMoveModal(fileIdx, transIdx) {
+            const trans = allData[fileIdx].transactions[transIdx];
+            currentMove = { trans };
+            document.getElementById('moveModalDesc').innerText = `Move transaction:\n${trans.description}\nAmount: ${formatCurrency(trans.amount)}\nDate: ${trans.date}`;
+            const currentMonth = allData[fileIdx].month;
+            document.getElementById('moveModalInput').value = '';
+            document.getElementById('moveModalInput').placeholder = `Current month: ${currentMonth}`;
+            document.getElementById('moveModal').showModal();
+        }
+
+        function closeMoveModal() {
+            document.getElementById('moveModal').close();
+            currentMove = null;
+        }
+
+        function applyMove() {
+            if (!currentMove) return;
+            const newMonth = document.getElementById('moveModalInput').value.trim();
+            if (!/^\d{4}-\d{2}$/.test(newMonth)) {
+                alert('Please enter the target month in YYYY-MM format (e.g., 2023-06).');
+                return;
+            }
+            const trans = currentMove.trans;
+            const tId = `${trans.date}|${trans.description}|${parseFloat(trans.amount).toFixed(2)}`;
+            
+            overrides.moved_transactions[tId] = newMonth;
+            
+            saveOverridesAndReload();
+            closeMoveModal();
         }
 
         let currentRemove = null;
@@ -627,53 +888,36 @@
                     overrides.ignored_exact.push(tId);
                 }
             }
-            recomputeAll();
             closeRemoveModal();
-            saveOverrides();
+            saveOverridesAndReload();
         }
 
-        function recomputeAll() {
-            allData.forEach(d => {
-                const newTotals = {};
-                let newIncomeTotal = 0;
-                const newIncomeBreakdown = [];
-                let newExpectedTotal = 0;
-                const newExpectedBreakdown = [];
-                
-                d.transactions.forEach(t => {
-                    if (!isIgnored(t)) {
-                        if (t.is_income) {
-                            newIncomeTotal += parseFloat(t.amount);
-                            newIncomeBreakdown.push({ desc: t.description, amount: parseFloat(t.amount) });
-                        } else if (t.category === 'Expected!') {
-                            newExpectedTotal += parseFloat(t.amount);
-                            newExpectedBreakdown.push({ desc: t.description, amount: parseFloat(t.amount) });
-                        } else {
-                            newTotals[t.category] = (newTotals[t.category] || 0) + parseFloat(t.amount);
-                        }
-                    }
-                });
-                d.totals = newTotals;
-                d.income_total = newIncomeTotal;
-                d.income_breakdown = newIncomeBreakdown;
-                d.expected_total = newExpectedTotal;
-                d.expected_breakdown = newExpectedBreakdown;
+        function reAddTransaction(desc) {
+            const index = (overrides.ignored_descriptions || []).indexOf(desc);
+            if (index > -1) {
+                overrides.ignored_descriptions.splice(index, 1);
+                saveOverridesAndReload();
+            }
+        }
+
+        function saveOverridesAndReload() {
+            // Optional: Show a loading indicator
+            document.body.style.cursor = 'wait';
+
+            saveOverrides().then(() => {
+                return fetch('/data');
+            }).then(res => res.json()).then(newData => {
+                renderPage(newData.data, newData.overrides);
+            }).catch(err => {
+                console.error("Error saving and reloading:", err);
+                alert("An error occurred while refreshing data. Please check the console.");
+            }).finally(() => {
+                document.body.style.cursor = 'default';
             });
-            
-            // Re-render
-            updateGlobalMax();
-            allData.forEach((d, idx) => {
-                renderTable(idx);
-                if (activeMonths.has(d.month)) {
-                    renderChart(idx, d);
-                }
-                updateIncomeDisplay(idx, d);
-            });
-            renderRemovedTable();
         }
 
         function saveOverrides() {
-            fetch('/save_overrides', {
+            return fetch('/save_overrides', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(overrides, null, 2)
@@ -684,6 +928,8 @@
             const ctx = document.getElementById(`chart-${fileIdx}`).getContext('2d');
             const canvas = document.getElementById(`chart-${fileIdx}`);
             const sankeyDiv = document.getElementById(`sankey-${fileIdx}`);
+
+            if (!data) return;
             
             if (currentChartType === 'sankey') {
                 canvas.style.display = 'none';
@@ -691,12 +937,13 @@
                 
                 const incomeAgg = {};
                 (data.income_breakdown || []).forEach(inc => {
-                    incomeAgg[inc.desc] = (incomeAgg[inc.desc] || 0) + parseFloat(inc.amount);
+                    const key = inc.short_desc || inc.desc;
+                    incomeAgg[key] = (incomeAgg[key] || 0) + parseFloat(inc.amount);
                 });
                 const incomeKeys = Object.keys(incomeAgg);
                 const totalIdx = incomeKeys.length;
 
-                const labels = [...incomeKeys.map(() => ""), "Total", ...Object.keys(data.totals)];
+                const labels = [...incomeKeys, "Total", ...Object.keys(data.totals)];
                 const sources = [];
                 const targets = [];
                 const values = [];
@@ -715,16 +962,43 @@
                     values.push(Math.abs(val));
                 });
 
+                const totalIncome = data.income_total;
+                const totalExpenses = Object.values(data.totals).reduce((sum, val) => sum + Math.abs(val), 0);
+                const net = totalIncome - totalExpenses;
+
+                const hovertexts = [];
+                incomeKeys.forEach(key => {
+                    hovertexts.push(`<b>${key}</b><br>${formatCurrency(incomeAgg[key])}<extra></extra>`);
+                });
+                hovertexts.push(`<b>Total</b><br>In: ${formatCurrency(totalIncome)}<br>Out: ${formatCurrency(-totalExpenses)}<br>Net: ${formatCurrency(net)}<extra></extra>`);
+                Object.keys(data.totals).forEach(key => {
+                    hovertexts.push(`<b>${key}</b><br>${formatCurrency(data.totals[key])}<extra></extra>`);
+                });
+
+                const layout = {
+                    margin: { l: 10, r: 10, b: 10, t: 60 },
+                    annotations: [{
+                        x: 0.5,
+                        y: 1.15,
+                        xref: 'paper',
+                        yref: 'paper',
+                        text: `<b>Net: ${net >= 0 ? '+' : ''}${formatCurrency(net)}</b>`,
+                        font: { size: 24, color: net >= 0 ? '#16a34a' : '#ef4444' },
+                        showarrow: false
+                    }]
+                };
+
                 const sankeyData = [{
                     type: "sankey",
                     orientation: "h",
                     node: {
                         pad: 15,
-                        thickness: 30,
+                        thickness: 20,
                         line: { color: "black", width: 0.5 },
                         label: labels,
                         color: [...incomeKeys.map(() => "#16a34a"), "#1e293b", ...Object.keys(data.totals).map(cat => categoryColors[cat])],
-                        hovertemplate: '%{label}<br>$%{value:,.0f}<extra></extra>'
+                        hovertext: hovertexts,
+                        hoverinfo: 'text'
                     },
                     link: {
                         source: sources,
@@ -734,7 +1008,7 @@
                     }
                 }];
 
-                Plotly.newPlot(`sankey-${fileIdx}`, sankeyData, { margin: { l: 10, r: 10, b: 10, t: 10 } }, { displayModeBar: false });
+                Plotly.newPlot(`sankey-${fileIdx}`, sankeyData, layout, { displayModeBar: false });
                 
                 if (sankeyDiv.removeAllListeners) {
                     sankeyDiv.removeAllListeners('plotly_click');
@@ -883,6 +1157,8 @@
                 }
             });
         }
+
+        renderPage(__DATA_JSON__, __OVERRIDES_JSON__);
     </script>
 </body>
 </html>
