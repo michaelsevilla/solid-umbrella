@@ -64,7 +64,7 @@ class TestBudgetApp(unittest.TestCase):
     @patch('budget.http.server.HTTPServer')
     @patch('budget.os.path.abspath')
     def test_csv_parsing_logic(self, mock_abspath, mock_server, mock_generate, mock_stdout):
-        """Verifies that CSV files are correctly parsed, categories mapped, and income/expected totals are calculated."""
+        # Verifies that CSV files are correctly parsed, categories mapped, and income/expected totals are calculated.
         
         # Trick budget.py into thinking it lives in our temporary directory
         mock_abspath.return_value = os.path.join(self.script_dir, 'budget.py')
@@ -94,8 +94,47 @@ class TestBudgetApp(unittest.TestCase):
 
     @patch('sys.stdout')
     @patch('budget.os.path.abspath')
+    def test_advanced_overrides(self, mock_abspath, mock_stdout):
+        # Verifies advanced override features like moving and renaming transactions.
+        mock_abspath.return_value = os.path.join(self.script_dir, 'budget.py')
+
+        # 1. Test the get_short_income_desc helper function directly
+        self.assertEqual(budget.get_short_income_desc("ADVANCED MICRO D PAYROLL PPD ID: 123"), "ADVANCED MICRO D")
+        self.assertEqual(budget.get_short_income_desc("Some other income"), "Some other income")
+        self.assertEqual(budget.get_short_income_desc("payment from client"), "payment from client")
+
+        # 2. Setup advanced overrides for moving and renaming
+        self.overrides['moved_transactions'] = {
+            "01/01/2026|Target|50.00": "2025-12"
+        }
+        self.overrides['expected_rename_mapping'] = {
+            "SD GAS": "Gas Bill"
+        }
+        with open(self.overrides_path, 'w', encoding='utf-8') as f:
+            json.dump(self.overrides, f)
+
+        # 3. Run the file processing logic
+        all_data, _ = budget.process_files([self.csv_path])
+
+        # 4. Verify the 'move' override was applied
+        jan_data = next((d for d in all_data if d['month'] == '2026-01'), None)
+        self.assertIsNotNone(jan_data)
+        self.assertNotIn('Groceries', jan_data['totals'])
+
+        dec_data = next((d for d in all_data if d['month'] == '2025-12'), None)
+        self.assertIsNotNone(dec_data)
+        self.assertEqual(len(dec_data['transactions']), 1)
+        self.assertEqual(dec_data['transactions'][0]['description'], 'Target')
+        self.assertEqual(dec_data['totals']['Groceries'], 50.0)
+
+        # 5. Verify the 'rename' override was applied to expected expenses
+        gas_tx_breakdown = next(exp for exp in jan_data['expected_breakdown'] if exp['original_desc'] == 'SD GAS')
+        self.assertEqual(gas_tx_breakdown['desc'], 'Gas Bill')
+
+    @patch('sys.stdout')
+    @patch('budget.os.path.abspath')
     def test_html_generation(self, mock_abspath, mock_stdout):
-        """Ensures that the HTML report is properly generated with the provided data and overrides."""
+        # Ensures that the HTML report is properly generated with the provided data and overrides.
         
         mock_abspath.return_value = os.path.join(self.script_dir, 'budget.py')
         template_path = os.path.join(self.script_dir, 'template.html')
