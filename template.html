@@ -137,9 +137,12 @@
                 <button id="btn-pie" class="btn btn-primary" style="box-shadow: 0 2px 4px rgb(0 0 0 / 0.1);" onclick="setChartType('pie')">Pie Chart</button>
                 <button id="btn-sankey" class="btn btn-cancel" onclick="setChartType('sankey')">Cash Flow</button>
                 <button id="btn-bar" class="btn btn-cancel" onclick="setChartType('bar')">Raw Values</button>
+                <button id="btn-average" class="btn btn-cancel" onclick="setChartType('average')">Average</button>
             </div>
         </div>
     </div>
+    <div id="month-filter-container-placeholder"></div>
+    <div id="average-view-container" style="display: none;"></div>
     <div id="dynamicContent"></div>
 
     <dialog id="editModal">
@@ -194,6 +197,48 @@
 
     <script>
         Chart.register(ChartDataLabels);
+
+        const errorBarPlugin = {
+            id: 'errorBarPlugin',
+            afterDatasetDraw(chart, args, options) {
+                const { ctx, data, scales: { x, y } } = chart;
+                const datasetMeta = args.meta;
+                const dataset = data.datasets[datasetMeta.index];
+
+                if (!dataset.error) {
+                    return;
+                }
+
+                ctx.save();
+                ctx.strokeStyle = 'rgba(29, 41, 59, 0.7)';
+                ctx.lineWidth = 1.5;
+
+                datasetMeta.data.forEach((datapoint, index) => {
+                    const errorData = dataset.error[index];
+                    if (!errorData) return;
+
+                    const barX = datapoint.x;
+                    const yMin = y.getPixelForValue(errorData.min);
+                    const yMax = y.getPixelForValue(errorData.max);
+                    const hatWidth = 8;
+
+                    // Draw vertical line
+                    ctx.beginPath();
+                    ctx.moveTo(barX, yMin);
+                    ctx.lineTo(barX, yMax);
+                    ctx.stroke();
+                    
+                    // Draw top & bottom hats
+                    ctx.beginPath();
+                    ctx.moveTo(barX - hatWidth / 2, yMax); ctx.lineTo(barX + hatWidth / 2, yMax);
+                    ctx.moveTo(barX - hatWidth / 2, yMin); ctx.lineTo(barX + hatWidth / 2, yMin);
+                    ctx.stroke();
+                });
+                ctx.restore();
+            }
+        };
+        Chart.register(errorBarPlugin);
+
         const overrides = __OVERRIDES_JSON__;
         let allData = __DATA_JSON__;
         const reportContainer = document.getElementById('reportContainer');
@@ -205,6 +250,10 @@
         let currentSorts = {};
         let currentRename = null;
         let activeMonths = new Set();
+        const colorPalette = [
+            '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#475569',
+            '#06b6d4', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6', '#f59e0b', '#3b82f6'
+        ];
 
         function updateGlobalMax() {
             globalMaxCategory = 0;
@@ -219,16 +268,28 @@
 
         function setChartType(type) {
             currentChartType = type;
-            ['pie', 'sankey', 'bar'].forEach(b => {
+            ['pie', 'sankey', 'bar', 'average'].forEach(b => {
                 const el = document.getElementById(`btn-${b}`);
                 el.className = b === type ? 'btn btn-primary' : 'btn btn-cancel';
                 el.style.boxShadow = b === type ? '0 2px 4px rgb(0 0 0 / 0.1)' : 'none';
             });
-            allData.forEach((d, idx) => {
-                if (activeMonths.has(d.month)) {
-                    renderChart(idx, d);
-                }
-            });
+
+            const dynamicContentEl = document.getElementById('dynamicContent');
+            const averageContainerEl = document.getElementById('average-view-container');
+
+            if (type === 'average') {
+                dynamicContentEl.style.display = 'none';
+                averageContainerEl.style.display = 'block';
+                renderAverageView();
+            } else {
+                dynamicContentEl.style.display = 'block';
+                averageContainerEl.style.display = 'none';
+                allData.forEach((d, idx) => {
+                    if (activeMonths.has(d.month)) {
+                        renderChart(idx, d);
+                    }
+                });
+            }
         }
 
         function formatCurrency(val) {
@@ -275,10 +336,6 @@
             updateGlobalMax();
 
             // Generate consistent colors for categories across all files
-            const colorPalette = [
-                '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#475569',
-                '#06b6d4', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6', '#f59e0b', '#3b82f6'
-            ];
             const categoryColors = {};
             let colorIdx = 0;
             allData.forEach(d => {
@@ -292,8 +349,10 @@
             window.categoryColors = categoryColors; // Make it accessible to renderChart
 
             // Create month filter buttons
-            const monthFilterContainer = document.createElement('div');
+            const monthFilterContainer = document.getElementById('month-filter-container-placeholder');
+            monthFilterContainer.innerHTML = '';
             monthFilterContainer.style.cssText = 'display: flex; gap: 0.5rem; margin-bottom: 2rem; flex-wrap: wrap;';
+            
             
             allData.forEach(d => {
                 const btn = document.createElement('button');
@@ -311,11 +370,15 @@
                         btn.style.backgroundColor = 'var(--primary)';
                         btn.style.color = 'white';
                     }
-                    toggleMonthVisibility();
+
+                    if (currentChartType === 'average') {
+                        renderAverageView();
+                    } else {
+                        toggleMonthVisibility();
+                    }
                 };
                 monthFilterContainer.appendChild(btn);
             });
-            dynamicContent.appendChild(monthFilterContainer);
 
             const monthsWrapper = document.createElement('div');
             monthsWrapper.style.cssText = 'display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 2rem; margin-bottom: 2rem; padding-bottom: 1rem;';
@@ -1151,6 +1214,214 @@
                                     ctx.lineTo(x, y);
                                     ctx.stroke();
                                 }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderAverageView() {
+            const container = document.getElementById('average-view-container');
+            container.innerHTML = `
+                <div class="card">
+                    <h2>Average Monthly Spending</h2>
+                    <div class="chart-container" style="height: 500px;">
+                        <canvas id="average-chart"></canvas>
+                    </div>
+                </div>
+                <div class="card" style="margin-top: 2rem;">
+                    <h2>Analyze Expected Expense Fluctuation</h2>
+                    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
+                        <label for="expected-expense-selector" style="font-weight: bold;">Select Expense:</label>
+                        <select id="expected-expense-selector" class="btn" style="background: #f1f5f9;"></select>
+                    </div>
+                    <div id="expected-trend-chart-container" class="chart-container" style="height: 300px; display: none;">
+                        <canvas id="expected-trend-chart"></canvas>
+                    </div>
+                </div>
+            `;
+            renderAverageCharts(); // This is the main entry point for this view
+        }
+
+        function stdDev(arr) {
+            if (!arr || arr.length < 2) return 0;
+            const n = arr.length;
+            const mean = arr.reduce((a, b) => a + b) / n;
+            return Math.sqrt(arr.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b) / n);
+        }
+
+        function renderAverageCharts() {
+            renderMainAverageChart();
+            renderExpectedExpenseSelector();
+        }
+
+        function renderMainAverageChart() {
+            const selectedData = allData.filter(d => activeMonths.has(d.month));
+            if (selectedData.length === 0) return;
+
+            const allCategories = new Set();
+            selectedData.forEach(monthData => {
+                Object.keys(monthData.totals).forEach(cat => allCategories.add(cat));
+            });
+
+            const categorySpending = {};
+            allCategories.forEach(cat => {
+                categorySpending[cat] = selectedData.map(monthData => Math.abs(monthData.totals[cat] || 0));
+            });
+
+            const chartData = [];
+            for (const [category, amounts] of Object.entries(categorySpending)) {
+                const avg = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+                if (avg === 0) continue; // Don't chart categories with no spending in the selected range
+                const min = Math.min(...amounts);
+                const max = Math.max(...amounts);
+                chartData.push({ category, avg, min, max });
+            }
+
+            chartData.sort((a, b) => b.avg - a.avg);
+
+            const ctx = document.getElementById('average-chart').getContext('2d');
+            if (window.averageChartInstance) {
+                window.averageChartInstance.destroy();
+            }
+            window.averageChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: chartData.map(d => d.category),
+                    datasets: [{
+                        label: 'Average Spending',
+                        data: chartData.map(d => d.avg),
+                        error: chartData.map(d => ({ min: d.min, max: d.max })),
+                        backgroundColor: chartData.map(d => categoryColors[d.category] || '#94a3b8')
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        datalabels: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const d = chartData[context.dataIndex];
+                                    return [
+                                        `Avg: ${formatCurrency(d.avg)}`,
+                                        `Min: ${formatCurrency(d.min)}`,
+                                        `Max: ${formatCurrency(d.max)}`
+                                    ];
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) { return formatCurrency(value); }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderExpectedExpenseSelector() {
+            const selector = document.getElementById('expected-expense-selector');
+            const selectedData = allData.filter(d => activeMonths.has(d.month));
+
+            const activeExpectedExpenses = new Set();
+            selectedData.forEach(monthData => {
+                (monthData.expected_breakdown || []).forEach(exp => {
+                    activeExpectedExpenses.add(exp.desc);
+                });
+            });
+
+            const chartData = [];
+            activeExpectedExpenses.forEach(expName => {
+                const monthlyTotals = selectedData.map(monthData => {
+                    const matchingExps = (monthData.expected_breakdown || []).filter(exp => exp.desc === expName);
+                    return matchingExps.reduce((sum, exp) => sum + Math.abs(exp.amount), 0);
+                });
+
+                const positiveAmounts = monthlyTotals.filter(a => a > 0);
+                if (positiveAmounts.length > 0) {
+                    const avg = positiveAmounts.reduce((a, b) => a + b, 0) / positiveAmounts.length;
+                    const min = Math.min(...positiveAmounts);
+                    const max = Math.max(...positiveAmounts);
+                    chartData.push({ name: expName, avg, min, max });
+                }
+            });
+
+            selector.innerHTML = '<option value="">-- Select One --</option>';
+            chartData.sort((a, b) => a.name.localeCompare(b.name)).forEach(stat => {
+                const option = document.createElement('option');
+                option.value = stat.name;
+                option.innerText = `${stat.name} (Avg: ${formatCurrency(stat.avg)}, Min: ${formatCurrency(stat.min)}, Max: ${formatCurrency(stat.max)})`;
+                selector.appendChild(option);
+            });
+
+            selector.onchange = (e) => {
+                renderExpectedTrendChart(e.target.value);
+            };
+
+            renderExpectedTrendChart('');
+        }
+
+        function renderExpectedTrendChart(expenseName) {
+            const container = document.getElementById('expected-trend-chart-container');
+            if (!expenseName) {
+                container.style.display = 'none';
+                if (window.expectedTrendChartInstance) {
+                    window.expectedTrendChartInstance.destroy();
+                }
+                return;
+            }
+            container.style.display = 'block';
+
+            const selectedMonthsData = allData.filter(d => activeMonths.has(d.month)).sort((a, b) => a.month.localeCompare(b.month));
+            const labels = selectedMonthsData.map(d => d.month);
+
+            const dataPoints = selectedMonthsData.map(monthData => {
+                const matchingExps = (monthData.expected_breakdown || []).filter(exp => exp.desc === expenseName);
+                if (matchingExps.length === 0) {
+                    return null;
+                }
+                const monthTotal = matchingExps.reduce((sum, exp) => sum + Math.abs(exp.amount), 0);
+                return monthTotal;
+            });
+
+            const dataset = {
+                label: expenseName,
+                data: dataPoints,
+                borderColor: categoryColors[expenseName] || colorPalette[5],
+                tension: 0.1,
+                pointRadius: 0,
+                pointHoverRadius: 5,
+                fill: true,
+                backgroundColor: (categoryColors[expenseName] || colorPalette[5]) + '33'
+            };
+
+            const ctx = document.getElementById('expected-trend-chart').getContext('2d');
+            if (window.expectedTrendChartInstance) {
+                window.expectedTrendChartInstance.destroy();
+            }
+            window.expectedTrendChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: { labels, datasets: [dataset] },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) { return formatCurrency(value); }
                             }
                         }
                     }
