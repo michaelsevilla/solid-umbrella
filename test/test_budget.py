@@ -75,7 +75,7 @@ class TestBudgetApp(unittest.TestCase):
             
         # Verify HTML generation was called and intercept the data payload
         self.assertTrue(mock_generate.called)
-        all_data, _ = mock_generate.call_args[0]
+        all_data = mock_generate.call_args[0][0]
         
         self.assertEqual(len(all_data), 1)
         month_data = all_data[0]
@@ -90,7 +90,7 @@ class TestBudgetApp(unittest.TestCase):
         self.assertEqual(month_data['income_total'], 1000.0)
         
         # Verify 'Expected!' expense exclusion from normal totals
-        self.assertEqual(month_data['expected_total'], 100.0)
+        self.assertEqual(month_data['totals'].get('Expected!', 0.0), 100.0)
 
     @patch('sys.stdout')
     @patch('budget.os.path.abspath')
@@ -107,14 +107,14 @@ class TestBudgetApp(unittest.TestCase):
         self.overrides['moved_transactions'] = {
             "01/01/2026|Target|50.00": "2025-12"
         }
-        self.overrides['expected_rename_mapping'] = {
+        self.overrides['rename_mapping'] = {
             "SD GAS": "Gas Bill"
         }
         with open(self.overrides_path, 'w', encoding='utf-8') as f:
             json.dump(self.overrides, f)
 
         # 3. Run the file processing logic
-        all_data, _ = budget.process_files([self.csv_path])
+        all_data, _, _ = budget.process_files([self.csv_path])
 
         # 4. Verify the 'move' override was applied
         jan_data = next((d for d in all_data if d['month'] == '2026-01'), None)
@@ -127,9 +127,9 @@ class TestBudgetApp(unittest.TestCase):
         self.assertEqual(dec_data['transactions'][0]['description'], 'Target')
         self.assertEqual(dec_data['totals']['Groceries'], 50.0)
 
-        # 5. Verify the 'rename' override was applied to expected expenses
-        gas_tx_breakdown = next(exp for exp in jan_data['expected_breakdown'] if exp['original_desc'] == 'SD GAS')
-        self.assertEqual(gas_tx_breakdown['desc'], 'Gas Bill')
+        # 5. Verify the 'rename' override was applied
+        renamed_tx = next(t for t in jan_data['transactions'] if t['original_description'] == 'SD GAS')
+        self.assertEqual(renamed_tx['description'], 'Gas Bill')
 
     @patch('sys.stdout')
     @patch('budget.os.path.abspath')
@@ -139,9 +139,9 @@ class TestBudgetApp(unittest.TestCase):
         mock_abspath.return_value = os.path.join(self.script_dir, 'budget.py')
         template_path = os.path.join(self.script_dir, 'template.html')
         with open(template_path, 'w', encoding='utf-8') as f:
-            f.write("<html>__DATA_JSON__ and __OVERRIDES_JSON__</html>")
+            f.write("<html>__DATA_JSON__ and __OVERRIDES_JSON__ and __DUPLICATES_JSON__</html>")
             
-        budget.generate_html([{"month": "2026-01"}], {})
+        budget.generate_html([{"month": "2026-01"}], {}, [])
         
         self.assertTrue(os.path.exists('report.html'))
         os.remove('report.html')

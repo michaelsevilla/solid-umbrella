@@ -3,6 +3,7 @@ import csv
 import json
 import os
 import http.server
+import argparse
 from datetime import datetime
 
 def get_short_income_desc(desc):
@@ -20,9 +21,10 @@ def get_short_income_desc(desc):
                 return short_desc
     return desc
 
-def generate_html(all_data, overrides):
+def generate_html(all_data, overrides, duplicates):
     data_json = json.dumps(all_data)
     overrides_json = json.dumps(overrides)
+    duplicates_json = json.dumps(duplicates)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     template_path = os.path.join(script_dir, 'template.html')
@@ -37,6 +39,7 @@ def generate_html(all_data, overrides):
 
     html_template = html_template.replace('__DATA_JSON__', data_json)
     html_template = html_template.replace('__OVERRIDES_JSON__', overrides_json)
+    html_template = html_template.replace('__DUPLICATES_JSON__', duplicates_json)
     
     with open('report.html', 'w', encoding='utf-8') as f:
         f.write(html_template)
@@ -48,8 +51,8 @@ class BudgetHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.split('?')[0] == '/data':
             try:
-                all_data, overrides = process_files(self.csv_files)
-                response_data = json.dumps({'data': all_data, 'overrides': overrides})
+                all_data, overrides, duplicates = process_files(self.csv_files)
+                response_data = json.dumps({'data': all_data, 'overrides': overrides, 'duplicates': duplicates})
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
@@ -94,6 +97,8 @@ def process_files(csv_files):
             print(f"Could not load {overrides_file}: {e}")
 
     monthly_data = {}
+    seen_transactions = set()
+    duplicates = []
 
     for csv_filename in csv_files:
         try:
@@ -163,6 +168,17 @@ def process_files(csv_files):
                         amt = 0.0
 
                     t_id = f"{date_val}|{original_desc}|{amt:.2f}"
+                    
+                    if t_id in seen_transactions:
+                        duplicates.append({
+                            'date': date_val,
+                            'description': original_desc,
+                            'amount': amt,
+                            'source': os.path.basename(csv_filename)
+                        })
+                        continue
+                    seen_transactions.add(t_id)
+
                     if t_id in overrides.get('moved_transactions', {}):
                         month_key = overrides['moved_transactions'][t_id]
 
@@ -225,20 +241,34 @@ def process_files(csv_files):
             print(f"Skipping {csv_filename} due to error: {e}")
 
     all_data = [monthly_data[k] for k in sorted(monthly_data.keys(), reverse=True)] if monthly_data else []
-    return all_data, overrides
+    return all_data, overrides, duplicates
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Solid Umbrella: Personal Finance Dashboard Generator\n\nParses bank CSV exports and generates an interactive local web dashboard.",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog="Example:\n  python budget.py checking.csv credit_card.csv"
+    )
+    parser.add_argument(
+        "csv_files",
+        metavar="CSV_FILE",
+        nargs="+",
+        help="One or more bank or credit card CSV export files to process."
+    )
+
     if len(sys.argv) < 2:
-        print("Usage: python budget.py <csv_file1> <csv_file2> ...")
+        parser.print_help()
         sys.exit(1)
 
-    csv_files = sys.argv[1:]
+    args = parser.parse_args()
+    csv_files = args.csv_files
+
     BudgetHandler.csv_files = csv_files # Set class attribute for the handler
 
-    all_data, overrides = process_files(csv_files)
+    all_data, overrides, duplicates = process_files(csv_files)
 
     if all_data:
-        generate_html(all_data, overrides)
+        generate_html(all_data, overrides, duplicates)
 
         PORT = 8000
         while True:

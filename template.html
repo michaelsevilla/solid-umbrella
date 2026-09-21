@@ -131,11 +131,13 @@
 </head>
 <body>
     <div class="container" id="reportContainer">
+        <div id="duplicatesWarningContainer"></div>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
             <h1 style="margin: 0;">Monthly Spending Analysis</h1>
             <div style="display: flex; gap: 0.5rem; background: #e2e8f0; padding: 0.35rem; border-radius: 8px;">
                 <button id="btn-pie" class="btn btn-primary" style="box-shadow: 0 2px 4px rgb(0 0 0 / 0.1);" onclick="setChartType('pie')">Pie Chart</button>
                 <button id="btn-sankey" class="btn btn-cancel" onclick="setChartType('sankey')">Cash Flow</button>
+                <button id="btn-bar" class="btn btn-cancel" onclick="setChartType('bar')">Raw Values</button>
             </div>
         </div>
     </div>
@@ -184,6 +186,7 @@
 
         const overrides = __OVERRIDES_JSON__;
         let allData = __DATA_JSON__;
+        let duplicatesData = __DUPLICATES_JSON__;
         const reportContainer = document.getElementById('reportContainer');
         const dynamicContent = document.getElementById('dynamicContent');
         let chartInstances = {};
@@ -206,9 +209,33 @@
             return desc.length > 20 ? desc.substring(0, 20) + '...' : desc;
         }
 
+        function syncBarCharts() {
+            let globalMax = 0;
+            Object.keys(chartInstances).forEach(fileIdx => {
+                const chart = chartInstances[fileIdx];
+                if (chart.config.type !== 'bar') return;
+                if (!activeMonths.has(allData[fileIdx].month)) return;
+
+                chart.data.datasets[0].data.forEach((val, i) => {
+                    if (chart.getDataVisibility(i)) {
+                        if (val > globalMax) globalMax = val;
+                    }
+                });
+            });
+
+            const maxVal = globalMax > 0 ? globalMax * 1.05 : undefined;
+            Object.values(chartInstances).forEach(chart => {
+                if (chart.config.type !== 'bar') return;
+                if (!chart.options.scales) chart.options.scales = {};
+                if (!chart.options.scales.y) chart.options.scales.y = {};
+                chart.options.scales.y.max = maxVal;
+                chart.update();
+            });
+        }
+
         function setChartType(type) {
             currentChartType = type;
-            ['pie', 'sankey'].forEach(b => {
+            ['pie', 'sankey', 'bar'].forEach(b => {
                 const el = document.getElementById(`btn-${b}`);
                 if (el) {
                     el.className = b === type ? 'btn btn-primary' : 'btn btn-cancel';
@@ -221,6 +248,10 @@
                     renderChart(idx, d);
                 }
             });
+
+            if (type === 'bar') {
+                syncBarCharts();
+            }
         }
 
         function isIgnored(t) {
@@ -228,9 +259,10 @@
             return overrides.ignored_descriptions.some(d => descLower.includes(d.toLowerCase()));
         }
         
-        function renderPage(data, ovrs) {
+        function renderPage(data, ovrs, duplicates) {
             window.allData = data;
             window.overrides = ovrs || { description_mapping: {}, ignored_descriptions: [], moved_transactions: {}, rename_mapping: {} };
+            window.duplicatesData = duplicates || [];
 
             // Ensure all override keys exist
             overrides.ignored_descriptions = overrides.ignored_descriptions || [];
@@ -240,6 +272,21 @@
 
             // Clear previous content and reset state
             dynamicContent.innerHTML = '';
+            const dupContainer = document.getElementById('duplicatesWarningContainer');
+            if (dupContainer) dupContainer.innerHTML = '';
+            
+            if (window.duplicatesData && window.duplicatesData.length > 0) {
+                if (dupContainer) {
+                    let html = `<div style="background-color: #fef2f2; border: 1px solid #f87171; color: #b91c1c; padding: 1rem; border-radius: 8px; margin-bottom: 2rem;">`;
+                    html += `<h3 style="margin-top: 0; margin-bottom: 0.5rem;">⚠️ Potential Duplicate Transactions Detected</h3>`;
+                    html += `<ul style="margin-bottom: 0; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">`;
+                    window.duplicatesData.forEach(dup => {
+                        html += `<li>${dup.date} - ${dup.description} - ${formatCurrency(dup.amount)} (Source: ${dup.source})</li>`;
+                    });
+                    html += `</ul></div>`;
+                    dupContainer.innerHTML = html;
+                }
+            }
             Object.values(chartInstances).forEach(chart => chart.destroy());
             chartInstances = {};
             currentFilters = {};
@@ -390,6 +437,10 @@
                     renderChart(fileIdx, data);
                 }
             });
+
+            if (currentChartType === 'bar') {
+                syncBarCharts();
+            }
         }
 
         function renderTable(fileIdx, filterCategory) {
@@ -701,7 +752,7 @@
             saveOverrides().then(() => {
                 return fetch('/data?_t=' + new Date().getTime(), { cache: 'no-store' });
             }).then(res => res.json()).then(newData => {
-                renderPage(newData.data, newData.overrides);
+                renderPage(newData.data, newData.overrides, newData.duplicates);
             }).catch(err => {
                 console.error("Error saving and reloading:", err);
                 alert("An error occurred while refreshing data. Please check the console.");
@@ -832,18 +883,100 @@
 
             const sortedEntries = Object.entries(data.totals)
                 .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-            const top5 = sortedEntries.slice(0, 5).map(e => e[0]);
 
-            chartInstances[fileIdx] = new Chart(ctx, {
-                type: 'pie',
-                data: {
-                    labels: Object.keys(data.totals),
-                    datasets: [{
-                        data: Object.values(data.totals).map(v => Math.abs(v)),
-                        backgroundColor: Object.keys(data.totals).map(cat => window.categoryColors[cat])
-                    }]
-                },
-                options: {
+            if (currentChartType === 'bar') {
+                chartInstances[fileIdx] = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: sortedEntries.map(e => e[0]),
+                        datasets: [{
+                            data: sortedEntries.map(e => Math.abs(e[1])),
+                            backgroundColor: sortedEntries.map(e => window.categoryColors[e[0]])
+                        }]
+                    },
+                    options: {
+                        maintainAspectRatio: false,
+                        layout: { padding: 20 },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function(value) {
+                                        return formatCurrency(value);
+                                    }
+                                }
+                            }
+                        },
+                        onClick: (evt, item, chart) => {
+                            if (item.length > 0) {
+                                const index = item[0].index;
+                                const label = chart.data.labels[index];
+                                renderTable(fileIdx, label);
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'bottom',
+                                labels: {
+                                    boxWidth: 12,
+                                    generateLabels: function(chart) {
+                                        const data = chart.data;
+                                        if (data.labels.length && data.datasets.length) {
+                                            return data.labels.map((label, i) => {
+                                                return {
+                                                    text: label,
+                                                    fillStyle: data.datasets[0].backgroundColor[i],
+                                                    hidden: !chart.getDataVisibility(i),
+                                                    index: i
+                                                };
+                                            });
+                                        }
+                                        return [];
+                                    }
+                                },
+                                onClick: function(e, legendItem, legend) {
+                                    const labelText = legendItem.text;
+                                    const willBeHidden = !legendItem.hidden;
+
+                                    Object.values(chartInstances).forEach(chart => {
+                                        const idx = chart.data.labels.indexOf(labelText);
+                                        if (idx !== -1) {
+                                            const currentlyHidden = !chart.getDataVisibility(idx);
+                                            if (currentlyHidden !== willBeHidden) {
+                                                chart.toggleDataVisibility(idx);
+                                            }
+                                        }
+                                    });
+                                    syncBarCharts();
+                                }
+                            },
+                            datalabels: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const cat = context.chart.data.labels[context.dataIndex];
+                                        const realVal = data.totals[cat];
+                                        return `${cat}: ${formatCurrency(realVal !== undefined ? realVal : context.raw)}`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } else {
+                const top5 = sortedEntries.slice(0, 5).map(e => e[0]);
+
+                chartInstances[fileIdx] = new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: Object.keys(data.totals),
+                        datasets: [{
+                            data: Object.values(data.totals).map(v => Math.abs(v)),
+                            backgroundColor: Object.keys(data.totals).map(cat => window.categoryColors[cat])
+                        }]
+                    },
+                    options: {
                     maintainAspectRatio: false,
                     layout: { padding: 40 },
                     onClick: (evt, item, chart) => {
@@ -903,9 +1036,10 @@
                     }
                 }
             });
+            }
         }
 
-        renderPage(__DATA_JSON__, __OVERRIDES_JSON__);
+        renderPage(__DATA_JSON__, __OVERRIDES_JSON__, __DUPLICATES_JSON__);
     </script>
 </body>
 </html>
