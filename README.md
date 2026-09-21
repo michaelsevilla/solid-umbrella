@@ -6,7 +6,7 @@ A lightweight, interactive local web application to visualize and analyze your p
 
 ## Features
 - **Multi-Account Support:** Feed it multiple CSVs (checking, savings, credit cards) and it will combine them into seamless monthly views.
-- **Interactive Visuals:** Toggle between pie charts and Sankey "Cash Flow" diagrams to see where your money is going.
+- **Interactive Visuals:** Toggle between Pie Charts, Sankey "Cash Flow" diagrams, and Bar Charts (Raw Values) to see where your money is going.
 - **Live UI Updates:** Edit categories, move transactions, or create overrides directly in the browser. The UI reloads instantly without a server restart.
 - **Granular Transaction Control:**
     - **Categorize:** Change the category for a single transaction or all future ones.

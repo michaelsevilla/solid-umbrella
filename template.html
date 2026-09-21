@@ -131,6 +131,7 @@
 </head>
 <body>
     <div class="container" id="reportContainer">
+        <div id="duplicatesWarningContainer"></div>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
             <h1 style="margin: 0;">Monthly Spending Analysis</h1>
             <div style="display: flex; gap: 0.5rem; background: #e2e8f0; padding: 0.35rem; border-radius: 8px;">
@@ -140,19 +141,21 @@
             </div>
         </div>
     </div>
+    <div id="month-filter-container-placeholder"></div>
     <div id="dynamicContent"></div>
 
     <dialog id="editModal">
-        <h3 style="margin-top: 0; margin-bottom: 1rem;">Edit Category</h3>
+        <h3 style="margin-top: 0; margin-bottom: 1rem;">Edit Transaction</h3>
         <p id="modalDesc" style="margin-bottom: 1rem; white-space: pre-wrap; font-size: 0.875rem;"></p>
         <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">New Category</label>
-        <input type="text" id="modalInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <input type="text" id="modalCategoryInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">New Name (Rename)</label>
+        <input type="text" id="modalNameInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
         <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">Match Substring (for "All Future")</label>
         <input type="text" id="modalMatchInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
         <div class="modal-buttons">
             <button class="btn btn-cancel" onclick="closeEditModal()">Cancel</button>
-            <button class="btn btn-primary" onclick="applyCategory('justThis')">Just This</button>
-            <button class="btn btn-primary" onclick="applyCategory('all')">All Future</button>
+            <button class="btn btn-primary" onclick="applyEdit('all')">All Future</button>
         </div>
     </dialog>
 
@@ -163,7 +166,6 @@
         <input type="text" id="removeMatchInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
         <div class="modal-buttons">
             <button class="btn btn-cancel" onclick="closeRemoveModal()">Cancel</button>
-            <button class="btn btn-primary" style="background: #ef4444;" onclick="applyRemove('justThis')">Just This</button>
             <button class="btn btn-primary" style="background: #ef4444;" onclick="applyRemove('all')">All Matching</button>
         </div>
     </dialog>
@@ -171,65 +173,31 @@
     <dialog id="moveModal">
         <h3 style="margin-top: 0; margin-bottom: 1rem;">Move Transaction</h3>
         <p id="moveModalDesc" style="margin-bottom: 1rem; white-space: pre-wrap; font-size: 0.875rem;"></p>
-        <label for="moveModalInput" style="font-size: 0.75rem; font-weight: bold; color: #475569;">Target Month (YYYY-MM)</label>
-        <input type="text" id="moveModalInput" placeholder="e.g., 2023-06" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">Target Month (YYYY-MM)</label>
+        <input type="text" id="moveModalInput" placeholder="e.g., 2026-02" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
         <div class="modal-buttons">
             <button class="btn btn-cancel" onclick="closeMoveModal()">Cancel</button>
             <button class="btn btn-primary" onclick="applyMove()">Move</button>
         </div>
     </dialog>
 
-    <dialog id="renameModal">
-        <h3 style="margin-top: 0; margin-bottom: 1rem;">Rename Expected Expense</h3>
-        <p style="font-size: 0.875rem; color: #475569; margin-bottom: 1rem;">This creates a rule to rename items in the "Expected!" category for display in tooltips.</p>
-        <label for="renameMatchInput" style="font-size: 0.75rem; font-weight: bold; color: #475569;">When description contains:</label>
-        <input type="text" id="renameMatchInput" placeholder="e.g., Bilt" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
-        <label for="renameNewNameInput" style="font-size: 0.75rem; font-weight: bold; color: #475569;">Rename to:</label>
-        <input type="text" id="renameNewNameInput" placeholder="e.g., Mortgage Payment" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
-        <div class="modal-buttons">
-            <button class="btn btn-cancel" onclick="closeRenameModal()">Cancel</button>
-            <button class="btn btn-primary" onclick="applyRename()">Save Rule</button>
-        </div>
-    </dialog>
-
     <script>
         Chart.register(ChartDataLabels);
+
         const overrides = __OVERRIDES_JSON__;
         let allData = __DATA_JSON__;
+        let duplicatesData = __DUPLICATES_JSON__;
         const reportContainer = document.getElementById('reportContainer');
         const dynamicContent = document.getElementById('dynamicContent');
         let chartInstances = {};
         let currentChartType = 'pie';
-        let globalMaxCategory = 0;
         let currentFilters = {};
         let currentSorts = {};
-        let currentRename = null;
         let activeMonths = new Set();
-
-        function updateGlobalMax() {
-            globalMaxCategory = 0;
-            allData.forEach(d => {
-                Object.values(d.totals).forEach(val => {
-                    if (Math.abs(val) > globalMaxCategory) {
-                        globalMaxCategory = Math.abs(val);
-                    }
-                });
-            });
-        }
-
-        function setChartType(type) {
-            currentChartType = type;
-            ['pie', 'sankey', 'bar'].forEach(b => {
-                const el = document.getElementById(`btn-${b}`);
-                el.className = b === type ? 'btn btn-primary' : 'btn btn-cancel';
-                el.style.boxShadow = b === type ? '0 2px 4px rgb(0 0 0 / 0.1)' : 'none';
-            });
-            allData.forEach((d, idx) => {
-                if (activeMonths.has(d.month)) {
-                    renderChart(idx, d);
-                }
-            });
-        }
+        const colorPalette = [
+            '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#475569',
+            '#06b6d4', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6', '#f59e0b', '#3b82f6'
+        ];
 
         function formatCurrency(val) {
             const absVal = Math.abs(val);
@@ -241,25 +209,84 @@
             return desc.length > 20 ? desc.substring(0, 20) + '...' : desc;
         }
 
+        function syncBarCharts() {
+            let globalMax = 0;
+            Object.keys(chartInstances).forEach(fileIdx => {
+                const chart = chartInstances[fileIdx];
+                if (chart.config.type !== 'bar') return;
+                if (!activeMonths.has(allData[fileIdx].month)) return;
+
+                chart.data.datasets[0].data.forEach((val, i) => {
+                    if (chart.getDataVisibility(i)) {
+                        if (val > globalMax) globalMax = val;
+                    }
+                });
+            });
+
+            const maxVal = globalMax > 0 ? globalMax * 1.05 : undefined;
+            Object.values(chartInstances).forEach(chart => {
+                if (chart.config.type !== 'bar') return;
+                if (!chart.options.scales) chart.options.scales = {};
+                if (!chart.options.scales.y) chart.options.scales.y = {};
+                chart.options.scales.y.max = maxVal;
+                chart.update();
+            });
+        }
+
+        function setChartType(type) {
+            currentChartType = type;
+            ['pie', 'sankey', 'bar'].forEach(b => {
+                const el = document.getElementById(`btn-${b}`);
+                if (el) {
+                    el.className = b === type ? 'btn btn-primary' : 'btn btn-cancel';
+                    el.style.boxShadow = b === type ? '0 2px 4px rgb(0 0 0 / 0.1)' : 'none';
+                }
+            });
+
+            allData.forEach((d, idx) => {
+                if (activeMonths.has(d.month)) {
+                    renderChart(idx, d);
+                }
+            });
+
+            if (type === 'bar') {
+                syncBarCharts();
+            }
+        }
+
         function isIgnored(t) {
-            const tId = `${t.date}|${t.description}|${parseFloat(t.amount).toFixed(2)}`;
-            if (overrides.ignored_exact.includes(tId)) return true;
             const descLower = t.description.toLowerCase();
             return overrides.ignored_descriptions.some(d => descLower.includes(d.toLowerCase()));
         }
         
-        function renderPage(data, ovrs) {
+        function renderPage(data, ovrs, duplicates) {
             window.allData = data;
-            window.overrides = ovrs;
+            window.overrides = ovrs || { description_mapping: {}, ignored_descriptions: [], moved_transactions: {}, rename_mapping: {} };
+            window.duplicatesData = duplicates || [];
 
             // Ensure all override keys exist
             overrides.ignored_descriptions = overrides.ignored_descriptions || [];
-            overrides.ignored_exact = overrides.ignored_exact || [];
+            overrides.description_mapping = overrides.description_mapping || {};
             overrides.moved_transactions = overrides.moved_transactions || {};
-            overrides.expected_rename_mapping = overrides.expected_rename_mapping || {};
+            overrides.rename_mapping = overrides.rename_mapping || {};
 
             // Clear previous content and reset state
             dynamicContent.innerHTML = '';
+            const dupContainer = document.getElementById('duplicatesWarningContainer');
+            if (dupContainer) dupContainer.innerHTML = '';
+            
+            if (window.duplicatesData && window.duplicatesData.length > 0) {
+                if (dupContainer) {
+                    let html = `<div style="background-color: #fef2f2; border: 1px solid #f87171; color: #b91c1c; padding: 1rem; border-radius: 8px; margin-bottom: 2rem;">`;
+                    html += `<h3 style="margin-top: 0; margin-bottom: 0.5rem;">⚠️ Potential Duplicate Transactions Detected</h3>`;
+                    html += `<ul style="margin-bottom: 0; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">`;
+                    window.duplicatesData.forEach(dup => {
+                        html += `<li>${dup.date} - ${dup.description} - ${formatCurrency(dup.amount)} (Source: ${dup.source})</li>`;
+                    });
+                    html += `</ul></div>`;
+                    dupContainer.innerHTML = html;
+                }
+            }
             Object.values(chartInstances).forEach(chart => chart.destroy());
             chartInstances = {};
             currentFilters = {};
@@ -272,18 +299,14 @@
                 activeMonths = new Set(allData.slice(0, 3).map(d => d.month));
             }
 
-            updateGlobalMax();
-
             // Generate consistent colors for categories across all files
-            const colorPalette = [
-                '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#475569',
-                '#06b6d4', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6', '#f59e0b', '#3b82f6'
-            ];
             const categoryColors = {};
             let colorIdx = 0;
             allData.forEach(d => {
                 Object.keys(d.totals).forEach(cat => {
-                    if (!categoryColors[cat]) {
+                    if (cat === 'Expected!') {
+                        categoryColors[cat] = '#000000';
+                    } else if (!categoryColors[cat]) {
                         categoryColors[cat] = colorPalette[colorIdx % colorPalette.length];
                         colorIdx++;
                     }
@@ -292,8 +315,10 @@
             window.categoryColors = categoryColors; // Make it accessible to renderChart
 
             // Create month filter buttons
-            const monthFilterContainer = document.createElement('div');
+            const monthFilterContainer = document.getElementById('month-filter-container-placeholder');
+            monthFilterContainer.innerHTML = '';
             monthFilterContainer.style.cssText = 'display: flex; gap: 0.5rem; margin-bottom: 2rem; flex-wrap: wrap;';
+            
             
             allData.forEach(d => {
                 const btn = document.createElement('button');
@@ -311,34 +336,19 @@
                         btn.style.backgroundColor = 'var(--primary)';
                         btn.style.color = 'white';
                     }
+
                     toggleMonthVisibility();
                 };
                 monthFilterContainer.appendChild(btn);
             });
-            dynamicContent.appendChild(monthFilterContainer);
 
             const monthsWrapper = document.createElement('div');
             monthsWrapper.style.cssText = 'display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 2rem; margin-bottom: 2rem; padding-bottom: 1rem;';
             dynamicContent.appendChild(monthsWrapper);
 
             const bottomTablesContainer = document.createElement('div');
-            bottomTablesContainer.style.cssText = 'display: flex; gap: 2rem; align-items: flex-start; margin-top: 4rem;';
+            bottomTablesContainer.style.cssText = 'gap: 2rem; align-items: flex-start; margin-top: 4rem;';
             dynamicContent.appendChild(bottomTablesContainer);
-
-            const removedContainer = document.createElement('div');
-            removedContainer.style.flex = '1';
-            const removedWrapper = document.createElement('div');
-            removedWrapper.className = 'card';
-            removedWrapper.innerHTML = `
-                <h2>Removed Transactions</h2>
-                <div style="max-height: 400px; overflow-y: auto;">
-                    <table id="removedTable">
-                        <thead><tr><th>Description</th><th>Total Amount</th><th style="width: 80px;">Action</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>`;
-            removedContainer.appendChild(removedWrapper);
-            bottomTablesContainer.appendChild(removedContainer);
 
             const overridesContainer = document.createElement('div');
             overridesContainer.style.flex = '1';
@@ -369,17 +379,8 @@
             chartCard.innerHTML = `
                 <h2>${data.month}</h2>
                 <div class="chart-container">
-                    <canvas id="chart-${fileIdx}"></canvas>
+                    <canvas id="chart-${fileIdx}" style="display: none;"></canvas>
                     <div id="sankey-${fileIdx}" style="display: none; width: 100%; height: 100%;"></div>
-                </div>
-                <div id="spending-summary-${fileIdx}" style="text-align: center; font-weight: bold; margin-top: 1rem; font-size: 1.1rem;"></div>
-                <div id="expected-table-container-${fileIdx}" style="margin-top: 1.5rem; display: none;">
-                    <h4 style="margin-bottom: 0.5rem; font-size: 0.9rem; color: #475569; padding-left: 0.5rem;">Expected Expenses</h4>
-                    <div style="max-height: 200px; overflow-y: auto;">
-                        <table id="expected-table-${fileIdx}" style="font-size: 0.8rem;">
-                            <tbody></tbody>
-                        </table>
-                    </div>
                 </div>
             `;
             monthCol.appendChild(chartCard);
@@ -413,8 +414,6 @@
             monthsWrapper.appendChild(monthCol);
 
             renderTable(fileIdx);
-            updateIncomeDisplay(fileIdx, data);
-            renderExpectedTable(fileIdx, data);
             // Initial chart render for visible months
             if (activeMonths.has(data.month)) {
                 renderChart(fileIdx, data);
@@ -422,99 +421,7 @@
         });
 
         toggleMonthVisibility();
-        renderRemovedTable();
         renderOverridesTable();
-        }
-
-        function updateIncomeDisplay(fileIdx, data) {
-            const contInc = document.getElementById(`income-container-${fileIdx}`);
-            const elInc = document.getElementById(`income-${fileIdx}`);
-            const ttInc = document.getElementById(`income-tooltip-${fileIdx}`);
-            
-            const contExp = document.getElementById(`expected-container-${fileIdx}`);
-            const elExp = document.getElementById(`expected-${fileIdx}`);
-            const ttExp = document.getElementById(`expected-tooltip-${fileIdx}`);
-            
-            const contNet = document.getElementById(`net-container-${fileIdx}`);
-            const elNet = document.getElementById(`net-${fileIdx}`);
-            
-            if (!contInc) return;
-            const incTotal = data.income_total || 0;
-            const expTotal = Math.abs(data.expected_total || 0);
-            
-            if (incTotal > 0) {
-                contInc.style.display = 'inline-block';
-                elInc.innerText = '+' + formatCurrency(incTotal);
-                ttInc.innerText = 'Income:\n' + (data.income_breakdown || []).map(inc => `  ${truncateDesc(inc.desc)}: ${formatCurrency(inc.amount)}`).join('\n');
-            } else {
-                contInc.style.display = 'none';
-            }
-
-            if (expTotal > 0) {
-                contExp.style.display = 'inline-block';
-                elExp.innerText = '-' + formatCurrency(expTotal);
-                ttExp.innerText = 'Expected:\n' + (data.expected_breakdown || []).map(exp => `  ${truncateDesc(exp.desc)}: ${formatCurrency(exp.amount)}`).join('\n');
-            } else {
-                contExp.style.display = 'none';
-            }
-            
-            if (incTotal > 0 && expTotal > 0) {
-                contNet.style.display = 'inline-block';
-                elNet.innerText = '= ' + formatCurrency(incTotal - expTotal);
-            } else {
-                contNet.style.display = 'none';
-            }
-
-            const summaryEl = document.getElementById(`spending-summary-${fileIdx}`);
-            if (!summaryEl) return;
-
-            // "totalSpending" now includes "Expected!" because it's in the `totals` object.
-            const totalSpending = Math.abs(Object.values(data.totals).reduce((sum, val) => sum + val, 0));
-            const emoji = totalSpending > incTotal ? '😞' : '😊';
-            const actualLeftover = incTotal - totalSpending;
-
-            summaryEl.innerHTML = `Spending this month = ${formatCurrency(totalSpending)} ${emoji}`;
-            summaryEl.title = `Actual leftover this month: ${formatCurrency(actualLeftover)}`;
-        }
-
-        function renderExpectedTable(fileIdx, data) {
-            const container = document.getElementById(`expected-table-container-${fileIdx}`);
-            const tbody = document.querySelector(`#expected-table-${fileIdx} tbody`);
-
-            if (!container || !tbody || !data.expected_breakdown || data.expected_breakdown.length === 0) {
-                if (container) container.style.display = 'none';
-                return;
-            }
-
-            container.style.display = 'block';
-            tbody.innerHTML = '';
-
-            data.expected_breakdown.forEach(exp => {
-                const tr = document.createElement('tr');
-                tr.style.border = 'none';
-
-                const descTd = document.createElement('td');
-                descTd.innerText = exp.desc;
-                descTd.style.padding = '0.25rem 0.5rem';
-                descTd.style.border = 'none';
-
-                const amountTd = document.createElement('td');
-                amountTd.innerText = formatCurrency(exp.amount);
-                amountTd.style.cssText = 'padding: 0.25rem 0.5rem; border: none; text-align: right; font-weight: bold; color: #ef4444;';
-
-                const actionTd = document.createElement('td');
-                actionTd.style.cssText = 'padding: 0.25rem 0.5rem; border: none; width: 40px; text-align: center;';
-                
-                const pencil = document.createElement('span');
-                pencil.innerHTML = '✏️';
-                pencil.style.cursor = 'pointer';
-                pencil.title = 'Rename this expected expense';
-                pencil.onclick = () => openRenameModal(exp.rule_pattern || exp.original_desc, exp.desc);
-                actionTd.appendChild(pencil);
-                
-                tr.append(descTd, amountTd, actionTd);
-                tbody.appendChild(tr);
-            });
         }
 
         function toggleMonthVisibility() {
@@ -530,6 +437,10 @@
                     renderChart(fileIdx, data);
                 }
             });
+
+            if (currentChartType === 'bar') {
+                syncBarCharts();
+            }
         }
 
         function renderTable(fileIdx, filterCategory) {
@@ -549,13 +460,30 @@
             const txs = [];
             data.transactions.forEach((t, origIdx) => {
                 if (isIgnored(t)) return;
-                if (activeFilter && t.category !== activeFilter) return;
+                
+                if (activeFilter) {
+                    let isMatch = (t.category === activeFilter);
+                    if (t.is_income) {
+                        const incMatch = (data.income_breakdown || []).find(inc => inc.desc === t.description);
+                        if (incMatch && (incMatch.short_desc || incMatch.desc) === activeFilter) {
+                            isMatch = true;
+                        } else if (t.description === activeFilter) {
+                            isMatch = true;
+                        }
+                    }
+                    if (!isMatch) return;
+                }
+                
                 tableSum += parseFloat(t.amount);
                 txs.push({ t, origIdx });
             });
             
             if (!activeFilter) {
-                tableSum = (data.income_total || 0) - Math.abs(data.expected_total || 0);
+                tableSum = Object.values(data.totals).reduce((sum, val) => sum + val, 0);
+            }
+
+            if (!currentSorts[fileIdx]) {
+                currentSorts[fileIdx] = { col: 'amount', asc: true };
             }
 
             const sort = currentSorts[fileIdx];
@@ -580,7 +508,8 @@
 
             if (activeFilter) {
                 title.innerText = `${sumStr} - Transactions: ${activeFilter}`;
-                title.style.color = categoryColors[activeFilter] || 'inherit';
+                const isIncomeFilter = (data.income_breakdown || []).some(inc => (inc.short_desc || inc.desc) === activeFilter);
+                title.style.color = isIncomeFilter ? '#16a34a' : (window.categoryColors[activeFilter] || 'inherit');
             } else {
                 title.innerText = `${sumStr} - All Transactions`;
                 title.style.color = 'inherit';
@@ -598,8 +527,8 @@
                     <td><span class="tag">${t.category}</span></td>
                     <td style="${colorStyle}">${amountStr}</td>
                     <td>
-                        <div style="display: flex; gap: 12px; align-items: center;">
-                            <span style="cursor: pointer; font-size: 0.85rem;" onclick="editCategory(${fileIdx}, ${origIdx})" title="Edit category">✏️</span> 
+                        <div style="display: flex; gap: 18px; align-items: center; justify-content: center;">
+                            <span style="cursor: pointer; font-size: 0.85rem;" onclick="editTransaction(${fileIdx}, ${origIdx})" title="Edit transaction">✏️</span>
                             <span style="cursor: pointer; font-size: 0.85rem;" onclick="openMoveModal(${fileIdx}, ${origIdx})" title="Move transaction to another month">📅</span>
                             <span style="cursor: pointer; font-size: 0.85rem;" onclick="removeTransaction(${fileIdx}, ${origIdx})" title="Remove transaction">❌</span>
                         </div>
@@ -618,50 +547,6 @@
                 currentSorts[fileIdx] = { col: col, asc: true };
             }
             renderTable(fileIdx);
-        }
-
-        function renderRemovedTable() {
-            const tbody = document.querySelector('#removedTable tbody');
-            if (!tbody) return;
-            tbody.innerHTML = '';
-            const removedSummary = {};
-            
-            // Aggregate ignored descriptions
-            allData.forEach(d => {
-                d.transactions.forEach(t => {
-                    const descLower = t.description.toLowerCase();
-                    const isIgnoredByDesc = (overrides.ignored_descriptions || []).some(ignored => descLower.includes(ignored.toLowerCase()));
-                    if (isIgnoredByDesc) {
-                        const matchingRule = (overrides.ignored_descriptions || []).find(ignored => descLower.includes(ignored.toLowerCase()));
-                        if (matchingRule) {
-                            if (!removedSummary[matchingRule]) {
-                                removedSummary[matchingRule] = { total: 0 };
-                            }
-                            removedSummary[matchingRule].total += parseFloat(t.amount);
-                        }
-                    }
-                });
-            });
-            
-            Object.entries(removedSummary)
-                .sort((a, b) => Math.abs(b[1].total) - Math.abs(a[1].total))
-                .forEach(([desc, stats]) => {
-                    const tr = document.createElement('tr');
-                    const totalStr = formatCurrency(stats.total);
-                    tr.innerHTML = `<td>Ignored when description contains: "<em>${desc}</em>"</td><td style="${stats.total < 0 ? 'color: red;' : ''}">${totalStr}</td>`;
-                    
-                    const actionTd = document.createElement('td');
-                    const readdBtn = document.createElement('button');
-                    readdBtn.className = 'btn btn-cancel';
-                    readdBtn.style.padding = '2px 8px';
-                    readdBtn.innerText = 'Re-add';
-                    readdBtn.title = `Stop ignoring transactions with "${desc}"`;
-                    readdBtn.onclick = () => reAddTransaction(desc);
-                    actionTd.appendChild(readdBtn);
-                    tr.appendChild(actionTd);
-
-                    tbody.appendChild(tr);
-                });
         }
 
         function renderOverridesTable() {
@@ -686,42 +571,44 @@
                 return tr;
             };
 
+            Object.entries(overrides.description_mapping || {}).forEach(([desc, cat]) => {
+                const ruleText = `Recategorize "<em>${truncateDesc(desc)}</em>" as <strong>${cat}</strong>`;
+                tbody.appendChild(createRow(ruleText, 'desc', desc));
+            });
+
+            (overrides.ignored_descriptions || []).forEach(desc => {
+                const ruleText = `Remove transactions matching "<em>${truncateDesc(desc)}</em>"`;
+                tbody.appendChild(createRow(ruleText, 'remove', desc));
+            });
+
             Object.entries(overrides.moved_transactions || {}).forEach(([tId, newMonth]) => {
                 const desc = tId.split('|')[1];
                 const ruleText = `Move "<em>${truncateDesc(desc)}</em>" to <strong>${newMonth}</strong>`;
                 tbody.appendChild(createRow(ruleText, 'move', tId));
             });
 
-            Object.entries(overrides.description_mapping || {}).forEach(([desc, cat]) => {
-                const ruleText = `Recategorize "<em>${truncateDesc(desc)}</em>" as <strong>${cat}</strong>`;
-                tbody.appendChild(createRow(ruleText, 'desc', desc));
-            });
-
-            Object.entries(overrides.exact_mapping || {}).forEach(([tId, cat]) => {
-                const desc = tId.split('|')[1];
-                const ruleText = `Recategorize specific "<em>${truncateDesc(desc)}</em>" as <strong>${cat}</strong>`;
-                tbody.appendChild(createRow(ruleText, 'exact', tId));
-            });
-
-            Object.entries(overrides.expected_rename_mapping || {}).forEach(([matchStr, newName]) => {
-                const ruleText = `Rename "Expected!" containing "<em>${truncateDesc(matchStr)}</em>" to <strong>${newName}</strong>`;
-                tbody.appendChild(createRow(ruleText, 'rename', matchStr));
+            Object.entries(overrides.rename_mapping || {}).forEach(([desc, newName]) => {
+                const ruleText = `Rename "<em>${truncateDesc(desc)}</em>" to <strong>${newName}</strong>`;
+                tbody.appendChild(createRow(ruleText, 'rename', desc));
             });
         }
 
         function deleteOverride(type, key) {
             let changed = false;
-            if (type === 'move' && overrides.moved_transactions[key]) {
-                delete overrides.moved_transactions[key];
-                changed = true;
-            } else if (type === 'desc' && overrides.description_mapping[key]) {
+            if (type === 'desc' && overrides.description_mapping[key]) {
                 delete overrides.description_mapping[key];
                 changed = true;
-            } else if (type === 'exact' && overrides.exact_mapping[key]) {
-                delete overrides.exact_mapping[key];
+            } else if (type === 'remove') {
+                const index = overrides.ignored_descriptions.indexOf(key);
+                if (index > -1) {
+                    overrides.ignored_descriptions.splice(index, 1);
+                    changed = true;
+                }
+            } else if (type === 'move' && overrides.moved_transactions[key]) {
+                delete overrides.moved_transactions[key];
                 changed = true;
-            } else if (type === 'rename' && overrides.expected_rename_mapping[key]) {
-                delete overrides.expected_rename_mapping[key];
+            } else if (type === 'rename' && overrides.rename_mapping[key]) {
+                delete overrides.rename_mapping[key];
                 changed = true;
             }
 
@@ -736,13 +623,14 @@
 
         let currentEdit = null;
 
-        function editCategory(fileIdx, transIdx) {
+        function editTransaction(fileIdx, transIdx) {
             const trans = allData[fileIdx].transactions[transIdx];
             currentEdit = { fileIdx, transIdx, trans };
             
-            document.getElementById('modalDesc').innerText = `Editing transaction:\n${trans.description}`;
-            document.getElementById('modalInput').value = trans.category;
-            document.getElementById('modalMatchInput').value = trans.description;
+            document.getElementById('modalDesc').innerText = `Editing transaction:\n${trans.original_description || trans.description}`;
+            document.getElementById('modalCategoryInput').value = trans.category;
+            document.getElementById('modalNameInput').value = trans.description;
+            document.getElementById('modalMatchInput').value = trans.original_description || trans.description;
             
             document.getElementById('editModal').showModal();
         }
@@ -752,15 +640,12 @@
             currentEdit = null;
         }
 
-        function applyCategory(type) {
+        function applyEdit(type) {
             if (!currentEdit) return;
-            const newCat = document.getElementById('modalInput').value.trim();
+            const newCat = document.getElementById('modalCategoryInput').value.trim();
+            const newName = document.getElementById('modalNameInput').value.trim();
             const trans = currentEdit.trans;
             
-            if (!newCat || newCat === trans.category) {
-                closeEditModal();
-                return;
-            }
 
             if (type === 'all') {
                 const matchStr = document.getElementById('modalMatchInput').value.trim();
@@ -768,91 +653,25 @@
                     alert("Please provide a substring to match.");
                     return;
                 }
-                overrides.description_mapping[matchStr] = newCat;
-                allData.forEach(d => {
-                    d.transactions.forEach(t => {
-                        if (t.description.toLowerCase().includes(matchStr.toLowerCase())) {
-                            t.category = newCat;
-                        }
-                    });
-                });
-            } else if (type === 'justThis') {
-                const tId = `${trans.date}|${trans.description}|${parseFloat(trans.amount).toFixed(2)}`;
-                overrides.exact_mapping[tId] = newCat;
-                trans.category = newCat;
+                
+                let changed = false;
+                if (newCat && newCat !== trans.category) {
+                    overrides.description_mapping[matchStr] = newCat;
+                    changed = true;
+                }
+                if (newName && newName !== (trans.original_description || trans.description)) {
+                    overrides.rename_mapping[matchStr] = newName;
+                    changed = true;
+                }
+                
+                if (!changed) {
+                    closeEditModal();
+                    return;
+                }
             }
 
+            saveOverridesAndReload();
             closeEditModal();
-            saveOverridesAndReload();
-        }
-
-        function openRenameModal(matchSuggestion, currentName) {            
-            // If a rule exists, the suggestion is the pattern. Otherwise, it's the full original description.
-            const isExistingRule = overrides.expected_rename_mapping.hasOwnProperty(matchSuggestion);
-            currentRename = { originalKey: isExistingRule ? matchSuggestion : null };
-
-            document.getElementById('renameMatchInput').value = matchSuggestion || '';
-            
-            // The new name is only pre-filled if it's different from the original description, which implies a rule is active.
-            const isCustomName = currentName && currentName !== matchSuggestion;
-            document.getElementById('renameNewNameInput').value = isCustomName ? currentName : '';
-
-            document.getElementById('renameModal').showModal();
-        }
-
-        function closeRenameModal() {
-            document.getElementById('renameModal').close();
-            currentRename = null;
-        }
-
-        function applyRename() {
-            const matchStr = document.getElementById('renameMatchInput').value.trim();
-            const newName = document.getElementById('renameNewNameInput').value.trim();
-
-            if (!matchStr) {
-                alert('Please fill out both fields to create a rename rule.');
-                return;
-            }
-
-            // If we were editing an existing rule and the key (match string) has changed, remove the old rule.
-            if (currentRename && currentRename.originalKey && currentRename.originalKey !== matchStr) {
-                delete overrides.expected_rename_mapping[currentRename.originalKey];
-            }
-            overrides.expected_rename_mapping[matchStr] = newName;
-            saveOverridesAndReload();
-            closeRenameModal();
-        }
-
-        let currentMove = null;
-        function openMoveModal(fileIdx, transIdx) {
-            const trans = allData[fileIdx].transactions[transIdx];
-            currentMove = { trans };
-            document.getElementById('moveModalDesc').innerText = `Move transaction:\n${trans.description}\nAmount: ${formatCurrency(trans.amount)}\nDate: ${trans.date}`;
-            const currentMonth = allData[fileIdx].month;
-            document.getElementById('moveModalInput').value = '';
-            document.getElementById('moveModalInput').placeholder = `Current month: ${currentMonth}`;
-            document.getElementById('moveModal').showModal();
-        }
-
-        function closeMoveModal() {
-            document.getElementById('moveModal').close();
-            currentMove = null;
-        }
-
-        function applyMove() {
-            if (!currentMove) return;
-            const newMonth = document.getElementById('moveModalInput').value.trim();
-            if (!/^\d{4}-\d{2}$/.test(newMonth)) {
-                alert('Please enter the target month in YYYY-MM format (e.g., 2023-06).');
-                return;
-            }
-            const trans = currentMove.trans;
-            const tId = `${trans.date}|${trans.description}|${parseFloat(trans.amount).toFixed(2)}`;
-            
-            overrides.moved_transactions[tId] = newMonth;
-            
-            saveOverridesAndReload();
-            closeMoveModal();
         }
 
         let currentRemove = null;
@@ -882,11 +701,6 @@
                 if (!overrides.ignored_descriptions.includes(matchStr)) {
                     overrides.ignored_descriptions.push(matchStr);
                 }
-            } else if (type === 'justThis') {
-                const tId = `${trans.date}|${trans.description}|${parseFloat(trans.amount).toFixed(2)}`;
-                if (!overrides.ignored_exact.includes(tId)) {
-                    overrides.ignored_exact.push(tId);
-                }
             }
             closeRemoveModal();
             saveOverridesAndReload();
@@ -900,14 +714,45 @@
             }
         }
 
+        let currentMove = null;
+
+        function openMoveModal(fileIdx, transIdx) {
+            const trans = allData[fileIdx].transactions[transIdx];
+            currentMove = { trans };
+            document.getElementById('moveModalDesc').innerText = `Move transaction:\n${trans.description}\nAmount: ${formatCurrency(trans.amount)}\nDate: ${trans.date}`;
+            const currentMonth = allData[fileIdx].month;
+            document.getElementById('moveModalInput').value = '';
+            document.getElementById('moveModalInput').placeholder = `Current month: ${currentMonth}`;
+            document.getElementById('moveModal').showModal();
+        }
+
+        function closeMoveModal() {
+            document.getElementById('moveModal').close();
+            currentMove = null;
+        }
+
+        function applyMove() {
+            if (!currentMove) return;
+            const newMonth = document.getElementById('moveModalInput').value.trim();
+            if (!/^\d{4}-\d{2}$/.test(newMonth)) {
+                alert('Please enter the target month in YYYY-MM format (e.g., 2026-02).');
+                return;
+            }
+            const trans = currentMove.trans;
+            const tId = `${trans.date}|${trans.description}|${parseFloat(trans.amount).toFixed(2)}`;
+            overrides.moved_transactions[tId] = newMonth;
+            saveOverridesAndReload();
+            closeMoveModal();
+        }
+
         function saveOverridesAndReload() {
             // Optional: Show a loading indicator
             document.body.style.cursor = 'wait';
 
             saveOverrides().then(() => {
-                return fetch('/data');
+                return fetch('/data?_t=' + new Date().getTime(), { cache: 'no-store' });
             }).then(res => res.json()).then(newData => {
-                renderPage(newData.data, newData.overrides);
+                renderPage(newData.data, newData.overrides, newData.duplicates);
             }).catch(err => {
                 console.error("Error saving and reloading:", err);
                 alert("An error occurred while refreshing data. Please check the console.");
@@ -965,6 +810,11 @@
                 const totalIncome = data.income_total;
                 const totalExpenses = Object.values(data.totals).reduce((sum, val) => sum + Math.abs(val), 0);
                 const net = totalIncome - totalExpenses;
+                
+                const expectedTotal = Math.abs(data.totals['Expected!'] || 0);
+                const restSpending = totalExpenses - expectedTotal;
+
+                const totalNodeColor = net > 0 ? '#16a34a' : '#ef4444';
 
                 const hovertexts = [];
                 incomeKeys.forEach(key => {
@@ -982,8 +832,8 @@
                         y: 1.15,
                         xref: 'paper',
                         yref: 'paper',
-                        text: `<b>Net: ${net >= 0 ? '+' : ''}${formatCurrency(net)}</b>`,
-                        font: { size: 24, color: net >= 0 ? '#16a34a' : '#ef4444' },
+                        text: `<b><span style="color: #ec4899">${formatCurrency(totalIncome)}</span> - <span style="color: #000000">${formatCurrency(expectedTotal)}</span> - <span style="color: #16a34a">${formatCurrency(restSpending)}</span> = <span style="color: ${net >= 0 ? '#16a34a' : '#ef4444'}">${formatCurrency(net)}</span></b>`,
+                        font: { size: 20, color: '#1e293b' },
                         showarrow: false
                     }]
                 };
@@ -996,7 +846,7 @@
                         thickness: 20,
                         line: { color: "black", width: 0.5 },
                         label: labels,
-                        color: [...incomeKeys.map(() => "#16a34a"), "#1e293b", ...Object.keys(data.totals).map(cat => categoryColors[cat])],
+                        color: [...incomeKeys.map(() => "#ec4899"), totalNodeColor, ...Object.keys(data.totals).map(cat => window.categoryColors[cat])],
                         hovertext: hovertexts,
                         hoverinfo: 'text'
                     },
@@ -1031,17 +881,17 @@
                 chartInstances[fileIdx].destroy();
             }
 
+            const sortedEntries = Object.entries(data.totals)
+                .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+
             if (currentChartType === 'bar') {
-                const sortedEntries = Object.entries(data.totals)
-                    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-                
                 chartInstances[fileIdx] = new Chart(ctx, {
                     type: 'bar',
                     data: {
                         labels: sortedEntries.map(e => e[0]),
                         datasets: [{
                             data: sortedEntries.map(e => Math.abs(e[1])),
-                            backgroundColor: sortedEntries.map(e => categoryColors[e[0]])
+                            backgroundColor: sortedEntries.map(e => window.categoryColors[e[0]])
                         }]
                     },
                     options: {
@@ -1050,9 +900,10 @@
                         scales: {
                             y: {
                                 beginAtZero: true,
-                                max: globalMaxCategory > 0 ? globalMaxCategory : undefined,
                                 ticks: {
-                                    callback: function(value) { return formatCurrency(value); }
+                                    callback: function(value) {
+                                        return formatCurrency(value);
+                                    }
                                 }
                             }
                         },
@@ -1064,37 +915,68 @@
                             }
                         },
                         plugins: {
-                            legend: { display: false },
+                            legend: {
+                                display: true,
+                                position: 'bottom',
+                                labels: {
+                                    boxWidth: 12,
+                                    generateLabels: function(chart) {
+                                        const data = chart.data;
+                                        if (data.labels.length && data.datasets.length) {
+                                            return data.labels.map((label, i) => {
+                                                return {
+                                                    text: label,
+                                                    fillStyle: data.datasets[0].backgroundColor[i],
+                                                    hidden: !chart.getDataVisibility(i),
+                                                    index: i
+                                                };
+                                            });
+                                        }
+                                        return [];
+                                    }
+                                },
+                                onClick: function(e, legendItem, legend) {
+                                    const labelText = legendItem.text;
+                                    const willBeHidden = !legendItem.hidden;
+
+                                    Object.values(chartInstances).forEach(chart => {
+                                        const idx = chart.data.labels.indexOf(labelText);
+                                        if (idx !== -1) {
+                                            const currentlyHidden = !chart.getDataVisibility(idx);
+                                            if (currentlyHidden !== willBeHidden) {
+                                                chart.toggleDataVisibility(idx);
+                                            }
+                                        }
+                                    });
+                                    syncBarCharts();
+                                }
+                            },
+                            datalabels: { display: false },
                             tooltip: {
                                 callbacks: {
                                     label: function(context) {
-                                        const realVal = data.totals[context.label];
-                                        return realVal !== undefined ? formatCurrency(realVal) : '';
+                                        const cat = context.chart.data.labels[context.dataIndex];
+                                        const realVal = data.totals[cat];
+                                        return `${cat}: ${formatCurrency(realVal !== undefined ? realVal : context.raw)}`;
                                     }
                                 }
-                            },
-                            datalabels: { display: false }
+                            }
                         }
                     }
                 });
-                return;
-            }
+            } else {
+                const top5 = sortedEntries.slice(0, 5).map(e => e[0]);
 
-            // Get top 5 categories for labels
-            const sortedEntries = Object.entries(data.totals)
-                .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-            const top5 = sortedEntries.slice(0, 5).map(e => e[0]);
-
-            chartInstances[fileIdx] = new Chart(ctx, {
-                type: 'pie',
-                data: {
-                    labels: Object.keys(data.totals),
-                    datasets: [{
-                        data: Object.values(data.totals).map(v => Math.abs(v)),
-                        backgroundColor: Object.keys(data.totals).map(cat => categoryColors[cat])
-                    }]
-                },
-                options: {
+                chartInstances[fileIdx] = new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: Object.keys(data.totals),
+                        datasets: [{
+                            data: Object.values(data.totals).map(v => Math.abs(v)),
+                            backgroundColor: Object.keys(data.totals).map(cat => window.categoryColors[cat])
+                        }]
+                    },
+                    options: {
                     maintainAspectRatio: false,
                     layout: { padding: 40 },
                     onClick: (evt, item, chart) => {
@@ -1135,7 +1017,6 @@
                                 const label = ctx.chart.data.labels[ctx.dataIndex];
                                 return top5.includes(label);
                             },
-                            // Add connector lines
                             listeners: {
                                 render: (context) => {
                                     const { chart, dataIndex } = context;
@@ -1143,7 +1024,6 @@
                                     const meta = chart.getDatasetMeta(0).data[dataIndex];
                                     const { x, y } = meta.tooltipPosition();
                                     
-                                    // Manually draw line from slice to label
                                     ctx.strokeStyle = '#94a3b8';
                                     ctx.lineWidth = 1;
                                     ctx.beginPath();
@@ -1156,9 +1036,10 @@
                     }
                 }
             });
+            }
         }
 
-        renderPage(__DATA_JSON__, __OVERRIDES_JSON__);
+        renderPage(__DATA_JSON__, __OVERRIDES_JSON__, __DUPLICATES_JSON__);
     </script>
 </body>
 </html>

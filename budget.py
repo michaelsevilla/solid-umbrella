@@ -3,6 +3,7 @@ import csv
 import json
 import os
 import http.server
+import argparse
 from datetime import datetime
 
 def get_short_income_desc(desc):
@@ -20,9 +21,10 @@ def get_short_income_desc(desc):
                 return short_desc
     return desc
 
-def generate_html(all_data, overrides):
+def generate_html(all_data, overrides, duplicates):
     data_json = json.dumps(all_data)
     overrides_json = json.dumps(overrides)
+    duplicates_json = json.dumps(duplicates)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     template_path = os.path.join(script_dir, 'template.html')
@@ -37,6 +39,7 @@ def generate_html(all_data, overrides):
 
     html_template = html_template.replace('__DATA_JSON__', data_json)
     html_template = html_template.replace('__OVERRIDES_JSON__', overrides_json)
+    html_template = html_template.replace('__DUPLICATES_JSON__', duplicates_json)
     
     with open('report.html', 'w', encoding='utf-8') as f:
         f.write(html_template)
@@ -46,12 +49,13 @@ class BudgetHandler(http.server.SimpleHTTPRequestHandler):
     csv_files = [] # Class attribute to hold csv file paths
 
     def do_GET(self):
-        if self.path == '/data':
+        if self.path.split('?')[0] == '/data':
             try:
-                all_data, overrides = process_files(self.csv_files)
-                response_data = json.dumps({'data': all_data, 'overrides': overrides})
+                all_data, overrides, duplicates = process_files(self.csv_files)
+                response_data = json.dumps({'data': all_data, 'overrides': overrides, 'duplicates': duplicates})
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
+                self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
                 self.end_headers()
                 self.wfile.write(response_data.encode('utf-8'))
             except Exception as e:
@@ -83,20 +87,18 @@ def process_files(csv_files):
     if not os.path.exists(overrides_file):
         overrides_file = 'overrides.json'  # Fallback to current working directory
 
-    overrides = {'description_mapping': {}, 'exact_mapping': {}, 'ignored_descriptions': [], 'ignored_exact': [], 'moved_transactions': {}, 'expected_rename_mapping': {}}
+    overrides = {'description_mapping': {}, 'ignored_descriptions': [], 'moved_transactions': {}, 'rename_mapping': {}}
     if os.path.exists(overrides_file):
         try:
             with open(overrides_file, 'r') as f:
                 loaded_overrides = json.load(f)
                 overrides.update(loaded_overrides)
-                if 'expected_rename_mapping' not in overrides: overrides['expected_rename_mapping'] = {}
-                if 'moved_transactions' not in overrides: overrides['moved_transactions'] = {}
-                if 'ignored_descriptions' not in overrides: overrides['ignored_descriptions'] = []
-                if 'ignored_exact' not in overrides: overrides['ignored_exact'] = []
         except Exception as e:
             print(f"Could not load {overrides_file}: {e}")
 
     monthly_data = {}
+    seen_transactions = set()
+    duplicates = []
 
     for csv_filename in csv_files:
         try:
@@ -137,6 +139,7 @@ def process_files(csv_files):
                     
                     # Normalize whitespace (HTML collapses spaces, so we should too for accurate substring matching)
                     desc = " ".join(desc.split())
+                    original_desc = desc
                     
                     # Skip credit card payoffs
                     if 'payment thank you' in desc.lower():
@@ -164,35 +167,39 @@ def process_files(csv_files):
                     except ValueError:
                         amt = 0.0
 
-                    is_income = False
-                    desc_lower = desc.lower()
-                    # Detect income from specific payroll strings
-                    if amt > 0 and any(kw in desc_lower for kw in ['amd', 'advanced micro', 'palomar', 'trinet', 'payroll']):
-                        is_income = True
+                    t_id = f"{date_val}|{original_desc}|{amt:.2f}"
+                    
+                    if t_id in seen_transactions:
+                        duplicates.append({
+                            'date': date_val,
+                            'description': original_desc,
+                            'amount': amt,
+                            'source': os.path.basename(csv_filename)
+                        })
+                        continue
+                    seen_transactions.add(t_id)
 
-                    t_id = f"{date_val}|{desc}|{amt:.2f}" 
-
-                    # Check for move override and apply it if it exists
                     if t_id in overrides.get('moved_transactions', {}):
                         month_key = overrides['moved_transactions'][t_id]
 
+                    is_income = amt > 0 and any(kw in original_desc.lower() for kw in ['amd', 'advanced micro', 'palomar', 'trinet', 'payroll'])
+
                     is_ignored = False
-                    if t_id in overrides.get('ignored_exact', []):
-                        is_ignored = True
-                    else:
-                        for ignored_desc in overrides.get('ignored_descriptions', []):
-                            if ignored_desc and ignored_desc.lower() in desc.lower():
-                                is_ignored = True
-                                break
+                    for ignored_desc in overrides.get('ignored_descriptions', []):
+                        if ignored_desc and ignored_desc.lower() in original_desc.lower():
+                            is_ignored = True
+                            break
 
                     cat = None
-                    if t_id in overrides.get('exact_mapping', {}):
-                        cat = overrides['exact_mapping'][t_id]
-                    else:
-                        for mapped_desc, mapped_cat in overrides.get('description_mapping', {}).items():
-                            if mapped_desc and mapped_desc.lower() in desc.lower():
-                                cat = mapped_cat
-                                break
+                    for mapped_desc, mapped_cat in overrides.get('description_mapping', {}).items():
+                        if mapped_desc and mapped_desc.lower() in original_desc.lower():
+                            cat = mapped_cat
+                            break
+
+                    for mapped_desc, new_name in overrides.get('rename_mapping', {}).items():
+                        if mapped_desc and mapped_desc.lower() in original_desc.lower():
+                            desc = new_name
+                            break
                     
                     if not cat:
                         cat = 'Other'
@@ -206,6 +213,7 @@ def process_files(csv_files):
                     t = {
                         'date': date_val,
                         'description': desc,
+                        'original_description': original_desc,
                         'category': cat,
                         'amount': amt,
                         'source': os.path.basename(csv_filename),
@@ -218,51 +226,49 @@ def process_files(csv_files):
                             'transactions': [],
                             'totals': {},
                             'income_total': 0.0,
-                            'income_breakdown': [],
-                            'expected_total': 0.0,
-                            'expected_breakdown': []
+                            'income_breakdown': []
                         }
                     
                     monthly_data[month_key]['transactions'].append(t)
                     if not is_ignored:
                         if is_income:
-                            short_desc = get_short_income_desc(desc)
+                            short_desc = get_short_income_desc(original_desc) if desc == original_desc else desc
                             monthly_data[month_key]['income_total'] += amt
                             monthly_data[month_key]['income_breakdown'].append({'desc': desc, 'short_desc': short_desc, 'amount': amt})
-                        elif cat == 'Expected!':
-                            # Add to totals so it appears in charts like Sankey
-                            monthly_data[month_key]['totals'][cat] = monthly_data[month_key]['totals'].get(cat, 0) + amt
-
-                            display_desc = desc
-                            rule_pattern = None
-                            for pattern, new_name in overrides.get('expected_rename_mapping', {}).items():
-                                if pattern and pattern.lower() in desc.lower():
-                                    display_desc = new_name
-                                    rule_pattern = pattern
-                                    break
-
-                            monthly_data[month_key]['expected_total'] += amt
-                            monthly_data[month_key]['expected_breakdown'].append({'desc': display_desc, 'original_desc': desc, 'amount': amt, 'rule_pattern': rule_pattern})
                         else:
                             monthly_data[month_key]['totals'][cat] = monthly_data[month_key]['totals'].get(cat, 0) + amt
         except Exception as e:
             print(f"Skipping {csv_filename} due to error: {e}")
 
     all_data = [monthly_data[k] for k in sorted(monthly_data.keys(), reverse=True)] if monthly_data else []
-    return all_data, overrides
+    return all_data, overrides, duplicates
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Solid Umbrella: Personal Finance Dashboard Generator\n\nParses bank CSV exports and generates an interactive local web dashboard.",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog="Example:\n  python budget.py checking.csv credit_card.csv"
+    )
+    parser.add_argument(
+        "csv_files",
+        metavar="CSV_FILE",
+        nargs="+",
+        help="One or more bank or credit card CSV export files to process."
+    )
+
     if len(sys.argv) < 2:
-        print("Usage: python budget.py <csv_file1> <csv_file2> ...")
+        parser.print_help()
         sys.exit(1)
 
-    csv_files = sys.argv[1:]
+    args = parser.parse_args()
+    csv_files = args.csv_files
+
     BudgetHandler.csv_files = csv_files # Set class attribute for the handler
 
-    all_data, overrides = process_files(csv_files)
+    all_data, overrides, duplicates = process_files(csv_files)
 
     if all_data:
-        generate_html(all_data, overrides)
+        generate_html(all_data, overrides, duplicates)
 
         PORT = 8000
         while True:
