@@ -48,9 +48,10 @@ def main():
 
     # 3. Analyze the diff with Gemini
     client = genai.Client(api_key=gemini_key)
-    response = client.models.generate_content(
-        model='gemini-3.6-flash',
-        contents=prompt,
+    
+    chat = client.chats.create(model='gemini-1.5-flash')
+    response = chat.send_message(
+        prompt,
         config=types.GenerateContentConfig(response_mime_type="application/json")
     )
 
