@@ -117,7 +117,13 @@ def process_files(csv_files):
     if not os.path.exists(overrides_file):
         overrides_file = 'overrides.json'  # Fallback to current working directory
 
-    overrides = {'description_mapping': {}, 'ignored_descriptions': [], 'moved_transactions': {}, 'rename_mapping': {}}
+    overrides = {
+        'description_mapping': {}, 
+        'ignored_descriptions': [], 
+        'moved_transactions': {}, 
+        'rename_mapping': {},
+        'income_keywords': ['payroll', 'direct dep']
+    }
     if os.path.exists(overrides_file):
         try:
             with open(overrides_file, 'r') as f:
@@ -212,7 +218,7 @@ def process_files(csv_files):
                     if t_id in overrides.get('moved_transactions', {}):
                         month_key = overrides['moved_transactions'][t_id]
 
-                    is_income = amt > 0 and any(kw in original_desc.lower() for kw in ['amd', 'advanced micro', 'palomar', 'trinet', 'payroll'])
+                    is_income = amt > 0 and any(kw in original_desc.lower() for kw in overrides.get('income_keywords', []))
 
                     is_ignored = False
                     for ignored_desc in overrides.get('ignored_descriptions', []):

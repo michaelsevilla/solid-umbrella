@@ -49,7 +49,8 @@ class TestBudgetApp(unittest.TestCase):
         self.overrides = {
             'description_mapping': {'Target': 'Groceries'},
             'ignored_descriptions': [],
-            'ignored_exact': []
+            'ignored_exact': [],
+            'income_keywords': ['trinet', 'payroll', 'advanced micro d']
         }
         with open(self.overrides_path, 'w', encoding='utf-8') as f:
             json.dump(self.overrides, f)
