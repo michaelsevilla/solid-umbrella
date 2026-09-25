@@ -130,6 +130,7 @@
         .month-col {
             flex: 1 0 450px;
             max-width: 100%;
+            min-width: 0;
             display: flex;
             flex-direction: column;
             gap: 2rem;
@@ -150,7 +151,7 @@
         <div class="header-title-container" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
             <h1 style="margin: 0;">Monthly Spending Analysis</h1>
             <div class="header-controls" style="display: flex; gap: 1.5rem; align-items: center;">
-                <div class="report-controls hide-in-standalone" style="display: flex; gap: 0.5rem;">
+                <div class="report-controls hide-in-standalone" style="__REPORT_BTN_STYLE__ gap: 0.5rem;">
                     <select id="monthSelector" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 0.875rem;">
                         <option value="">Select a Month...</option>
                     </select>
@@ -319,7 +320,7 @@
             const existingMonths = new Set(allData.map(d => d.month));
             activeMonths = new Set([...activeMonths].filter(m => existingMonths.has(m)));
             if (activeMonths.size === 0) {
-                activeMonths = new Set(allData.slice(0, 3).map(d => d.month));
+                activeMonths = new Set(allData.slice(0, 1).map(d => d.month));
             }
 
             // Generate consistent colors for categories across all files
@@ -468,6 +469,11 @@
                 // Prevent Plotly 0x0 bugs by re-rendering right after becoming visible
                 if (isVisible && wasHidden) {
                     renderChart(fileIdx, data);
+                } else if (isVisible && !wasHidden) {
+                    // Force resize on existing charts if the flex layout changed
+                    if (chartInstances[fileIdx] && typeof chartInstances[fileIdx].resize === 'function') {
+                        chartInstances[fileIdx].resize();
+                    }
                 }
             });
 
@@ -925,7 +931,7 @@
                     }
                 }];
 
-                Plotly.newPlot(`sankey-${fileIdx}`, sankeyData, layout, { displayModeBar: false });
+                Plotly.newPlot(`sankey-${fileIdx}`, sankeyData, layout, { displayModeBar: false, responsive: true });
                 
                 if (sankeyDiv.removeAllListeners) {
                     sankeyDiv.removeAllListeners('plotly_click');
@@ -963,9 +969,10 @@
                         }]
                     },
                     options: {
-                    maintainAspectRatio: false,
-                    layout: { padding: 40 },
-                    onClick: (evt, item, chart) => {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        layout: { padding: 40 },
+                        onClick: (evt, item, chart) => {
                         if (item.length > 0) {
                             const index = item[0].index;
                             const label = chart.data.labels[index];

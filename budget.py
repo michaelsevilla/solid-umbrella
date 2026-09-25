@@ -21,7 +21,7 @@ def get_short_income_desc(desc):
                 return short_desc
     return desc
 
-def generate_html(all_data, overrides, duplicates, output_filename='report.html', is_standalone=False):
+def generate_html(all_data, overrides, duplicates, output_filename='report.html', is_standalone=False, show_report_btn=False):
     data_json = json.dumps(all_data)
     overrides_json = json.dumps(overrides)
     duplicates_json = json.dumps(duplicates)
@@ -43,6 +43,9 @@ def generate_html(all_data, overrides, duplicates, output_filename='report.html'
     
     standalone_css = ".hide-in-standalone { display: none !important; }" if is_standalone else ""
     html_template = html_template.replace('__STANDALONE_CSS__', standalone_css)
+    
+    report_btn_style = "display: flex;" if show_report_btn else "display: none !important;"
+    html_template = html_template.replace('__REPORT_BTN_STYLE__', report_btn_style)
     
     with open(output_filename, 'w', encoding='utf-8') as f:
         f.write(html_template)
@@ -282,6 +285,11 @@ def main():
         nargs="+",
         help="One or more bank or credit card CSV export files to process."
     )
+    parser.add_argument(
+        "--enable-reports",
+        action="store_true",
+        help="Show the standalone report generation button in the UI."
+    )
 
     if len(sys.argv) < 2:
         parser.print_help()
@@ -295,7 +303,7 @@ def main():
     all_data, overrides, duplicates = process_files(csv_files)
 
     if all_data:
-        generate_html(all_data, overrides, duplicates)
+        generate_html(all_data, overrides, duplicates, show_report_btn=args.enable_reports)
 
         PORT = 8000
         while True:

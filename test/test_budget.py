@@ -139,22 +139,33 @@ class TestBudgetApp(unittest.TestCase):
         mock_abspath.return_value = os.path.join(self.script_dir, 'budget.py')
         template_path = os.path.join(self.script_dir, 'template.html')
         with open(template_path, 'w', encoding='utf-8') as f:
-            f.write("<html>__DATA_JSON__ and __OVERRIDES_JSON__ and __DUPLICATES_JSON__ and __STANDALONE_CSS__</html>")
+            f.write("<html>__DATA_JSON__ and __OVERRIDES_JSON__ and __DUPLICATES_JSON__ and __STANDALONE_CSS__ and __REPORT_BTN_STYLE__</html>")
             
         # Test standard report generation
         budget.generate_html([{"month": "2026-01"}], {}, [], output_filename='report.html')
         
         self.assertTrue(os.path.exists('report.html'))
         with open('report.html', 'r', encoding='utf-8') as f:
-            self.assertNotIn("display: none !important", f.read())
+            content = f.read()
+            self.assertNotIn(".hide-in-standalone { display: none !important; }", content)
+            self.assertIn("display: none !important;", content)
         os.remove('report.html')
         
         # Test standalone report generation
         budget.generate_html([{"month": "2026-01"}], {}, [], output_filename='report_2026-01.html', is_standalone=True)
         self.assertTrue(os.path.exists('report_2026-01.html'))
         with open('report_2026-01.html', 'r', encoding='utf-8') as f:
-            self.assertIn("display: none !important", f.read())
+            content = f.read()
+            self.assertIn(".hide-in-standalone { display: none !important; }", content)
         os.remove('report_2026-01.html')
+        
+        # Test report button enabled
+        budget.generate_html([{"month": "2026-01"}], {}, [], output_filename='report_btn.html', show_report_btn=True)
+        self.assertTrue(os.path.exists('report_btn.html'))
+        with open('report_btn.html', 'r', encoding='utf-8') as f:
+            content = f.read()
+            self.assertIn("display: flex;", content)
+        os.remove('report_btn.html')
 
 if __name__ == '__main__':
     unittest.main()

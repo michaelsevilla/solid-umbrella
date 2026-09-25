@@ -2,3 +2,4 @@
 *.json
 report.html
 __pycache__
+csvs/
