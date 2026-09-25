@@ -12,6 +12,7 @@ A lightweight, interactive local web application to visualize and analyze your p
     - **Categorize:** Change the category for a single transaction or all future ones.
     - **Move:** Correct posting dates by moving a transaction to a different month with a single click.
     - **Rename:** Clean up recurring "Expected!" expenses (e.g., rename "Bilt Rewards Pmt" to "Mortgage").
+- **Standalone Reports:** Generate clean, read-only HTML dashboards for specific months to share securely.
 - **Smart Sorting:** Click table headers to sort by amount, description, or category.
 - **Income Tracking:** Automatically detects payroll deposits (e.g. AMD, Palomar) and breaks them down at the top of the monthly reports.
 

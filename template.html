@@ -127,17 +127,40 @@
             visibility: visible;
             opacity: 1;
         }
+        .month-col {
+            flex: 1 0 450px;
+            max-width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+        @media (max-width: 768px) {
+            body { padding: 1rem; }
+            .month-col { flex: 1 0 100%; min-width: 0; }
+            .chart-container { height: 300px; }
+            .header-controls { flex-direction: column; align-items: flex-start !important; gap: 1rem !important; }
+            .header-title-container { flex-direction: column; align-items: flex-start !important; gap: 1rem; }
+        }
+        __STANDALONE_CSS__
     </style>
 </head>
 <body>
     <div class="container" id="reportContainer">
-        <div id="duplicatesWarningContainer"></div>
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
+        <div id="duplicatesWarningContainer" class="hide-in-standalone"></div>
+        <div class="header-title-container" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3rem;">
             <h1 style="margin: 0;">Monthly Spending Analysis</h1>
-            <div style="display: flex; gap: 0.5rem; background: #e2e8f0; padding: 0.35rem; border-radius: 8px;">
-                <button id="btn-pie" class="btn btn-primary" style="box-shadow: 0 2px 4px rgb(0 0 0 / 0.1);" onclick="setChartType('pie')">Pie Chart</button>
-                <button id="btn-sankey" class="btn btn-cancel" onclick="setChartType('sankey')">Cash Flow</button>
-                <button id="btn-bar" class="btn btn-cancel" onclick="setChartType('bar')">Raw Values</button>
+            <div class="header-controls" style="display: flex; gap: 1.5rem; align-items: center;">
+                <div class="report-controls hide-in-standalone" style="display: flex; gap: 0.5rem;">
+                    <select id="monthSelector" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 0.875rem;">
+                        <option value="">Select a Month...</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="generateReport()">Generate Standalone Report</button>
+                </div>
+                <div style="display: flex; gap: 0.5rem; background: #e2e8f0; padding: 0.35rem; border-radius: 8px;">
+                    <button id="btn-pie" class="btn btn-primary" style="box-shadow: 0 2px 4px rgb(0 0 0 / 0.1);" onclick="setChartType('pie')">Pie Chart</button>
+                    <button id="btn-sankey" class="btn btn-cancel" onclick="setChartType('sankey')">Cash Flow</button>
+                    <button id="btn-bar" class="btn btn-cancel hide-in-standalone" onclick="setChartType('bar')">Raw Values</button>
+                </div>
             </div>
         </div>
     </div>
@@ -209,33 +232,33 @@
             return desc.length > 20 ? desc.substring(0, 20) + '...' : desc;
         }
 
-        function syncBarCharts() {
-            let globalMax = 0;
-            Object.keys(chartInstances).forEach(fileIdx => {
-                const chart = chartInstances[fileIdx];
-                if (chart.config.type !== 'bar') return;
-                if (!activeMonths.has(allData[fileIdx].month)) return;
+    function syncBarCharts() {
+        let globalMax = 0;
+        Object.keys(chartInstances).forEach(fileIdx => {
+            const chart = chartInstances[fileIdx];
+            if (chart.config.type !== 'bar') return;
+            if (!activeMonths.has(allData[fileIdx].month)) return;
 
-                chart.data.datasets[0].data.forEach((val, i) => {
-                    if (chart.getDataVisibility(i)) {
-                        if (val > globalMax) globalMax = val;
-                    }
-                });
+            chart.data.datasets[0].data.forEach((val, i) => {
+                if (chart.getDataVisibility(i)) {
+                    if (val > globalMax) globalMax = val;
+                }
             });
+        });
 
-            const maxVal = globalMax > 0 ? globalMax * 1.05 : undefined;
-            Object.values(chartInstances).forEach(chart => {
-                if (chart.config.type !== 'bar') return;
-                if (!chart.options.scales) chart.options.scales = {};
-                if (!chart.options.scales.y) chart.options.scales.y = {};
-                chart.options.scales.y.max = maxVal;
-                chart.update();
-            });
-        }
+        const maxVal = globalMax > 0 ? globalMax * 1.05 : undefined;
+        Object.values(chartInstances).forEach(chart => {
+            if (chart.config.type !== 'bar') return;
+            if (!chart.options.scales) chart.options.scales = {};
+            if (!chart.options.scales.y) chart.options.scales.y = {};
+            chart.options.scales.y.max = maxVal;
+            chart.update();
+        });
+    }
 
         function setChartType(type) {
             currentChartType = type;
-            ['pie', 'sankey', 'bar'].forEach(b => {
+        ['pie', 'sankey', 'bar'].forEach(b => {
                 const el = document.getElementById(`btn-${b}`);
                 if (el) {
                     el.className = b === type ? 'btn btn-primary' : 'btn btn-cancel';
@@ -249,9 +272,9 @@
                 }
             });
 
-            if (type === 'bar') {
-                syncBarCharts();
-            }
+        if (type === 'bar') {
+            syncBarCharts();
+        }
         }
 
         function isIgnored(t) {
@@ -272,21 +295,21 @@
 
             // Clear previous content and reset state
             dynamicContent.innerHTML = '';
-            const dupContainer = document.getElementById('duplicatesWarningContainer');
-            if (dupContainer) dupContainer.innerHTML = '';
-            
-            if (window.duplicatesData && window.duplicatesData.length > 0) {
-                if (dupContainer) {
-                    let html = `<div style="background-color: #fef2f2; border: 1px solid #f87171; color: #b91c1c; padding: 1rem; border-radius: 8px; margin-bottom: 2rem;">`;
-                    html += `<h3 style="margin-top: 0; margin-bottom: 0.5rem;">⚠️ Potential Duplicate Transactions Detected</h3>`;
-                    html += `<ul style="margin-bottom: 0; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">`;
-                    window.duplicatesData.forEach(dup => {
-                        html += `<li>${dup.date} - ${dup.description} - ${formatCurrency(dup.amount)} (Source: ${dup.source})</li>`;
-                    });
-                    html += `</ul></div>`;
-                    dupContainer.innerHTML = html;
-                }
+        const dupContainer = document.getElementById('duplicatesWarningContainer');
+        if (dupContainer) dupContainer.innerHTML = '';
+        
+        if (window.duplicatesData && window.duplicatesData.length > 0) {
+            if (dupContainer) {
+                let html = `<div style="background-color: #fef2f2; border: 1px solid #f87171; color: #b91c1c; padding: 1rem; border-radius: 8px; margin-bottom: 2rem;">`;
+                html += `<h3 style="margin-top: 0; margin-bottom: 0.5rem;">⚠️ Potential Duplicate Transactions Detected</h3>`;
+                html += `<ul style="margin-bottom: 0; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">`;
+                window.duplicatesData.forEach(dup => {
+                    html += `<li>${dup.date} - ${dup.description} - ${formatCurrency(dup.amount)} (Source: ${dup.source})</li>`;
+                });
+                html += `</ul></div>`;
+                dupContainer.innerHTML = html;
             }
+        }
             Object.values(chartInstances).forEach(chart => chart.destroy());
             chartInstances = {};
             currentFilters = {};
@@ -313,6 +336,18 @@
                 });
             });
             window.categoryColors = categoryColors; // Make it accessible to renderChart
+
+        // Populate the month selector dropdown
+        const selector = document.getElementById("monthSelector");
+        if (selector) {
+            selector.innerHTML = '<option value="">Select a Month...</option>';
+            data.forEach(d => {
+                const option = document.createElement("option");
+                option.value = d.month;
+                option.text = d.month;
+                selector.appendChild(option);
+            });
+        }
 
             // Create month filter buttons
             const monthFilterContainer = document.getElementById('month-filter-container-placeholder');
@@ -368,10 +403,8 @@
             allData.forEach((data, fileIdx) => {
             const monthCol = document.createElement('div');
             monthCol.id = `monthCol-${fileIdx}`;
-            monthCol.style.flex = '0 0 450px';
+            monthCol.className = 'month-col';
             monthCol.style.display = 'flex';
-            monthCol.style.flexDirection = 'column';
-            monthCol.style.gap = '2rem';
 
             const chartCard = document.createElement('div');
             chartCard.className = 'card';
@@ -438,9 +471,9 @@
                 }
             });
 
-            if (currentChartType === 'bar') {
-                syncBarCharts();
-            }
+    if (currentChartType === 'bar') {
+        syncBarCharts();
+    }
         }
 
         function renderTable(fileIdx, filterCategory) {
@@ -769,6 +802,40 @@
             }).catch(err => console.error("Error saving overrides:", err));
         }
 
+    function generateReport() {
+        const selector = document.getElementById("monthSelector");
+        const selectedMonth = selector.value;
+        
+        if (!selectedMonth) {
+            alert("Please select a month first!");
+            return;
+        }
+        
+        document.body.style.cursor = 'wait';
+        
+        fetch("/generate_month_report", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ month: selectedMonth })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error("Network response was not ok");
+            return response.json();
+        })
+        .then(data => {
+            alert(data.message);
+        })
+        .catch(error => {
+            console.error("Error generating report:", error);
+            alert("Failed to generate report.");
+        })
+        .finally(() => {
+            document.body.style.cursor = 'default';
+        });
+    }
+
         function renderChart(fileIdx, data) {
             const ctx = document.getElementById(`chart-${fileIdx}`).getContext('2d');
             const canvas = document.getElementById(`chart-${fileIdx}`);
@@ -884,92 +951,11 @@
             const sortedEntries = Object.entries(data.totals)
                 .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
 
-            if (currentChartType === 'bar') {
-                chartInstances[fileIdx] = new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: sortedEntries.map(e => e[0]),
-                        datasets: [{
-                            data: sortedEntries.map(e => Math.abs(e[1])),
-                            backgroundColor: sortedEntries.map(e => window.categoryColors[e[0]])
-                        }]
-                    },
-                    options: {
-                        maintainAspectRatio: false,
-                        layout: { padding: 20 },
-                        scales: {
-                            y: {
-                                beginAtZero: true,
-                                ticks: {
-                                    callback: function(value) {
-                                        return formatCurrency(value);
-                                    }
-                                }
-                            }
-                        },
-                        onClick: (evt, item, chart) => {
-                            if (item.length > 0) {
-                                const index = item[0].index;
-                                const label = chart.data.labels[index];
-                                renderTable(fileIdx, label);
-                            }
-                        },
-                        plugins: {
-                            legend: {
-                                display: true,
-                                position: 'bottom',
-                                labels: {
-                                    boxWidth: 12,
-                                    generateLabels: function(chart) {
-                                        const data = chart.data;
-                                        if (data.labels.length && data.datasets.length) {
-                                            return data.labels.map((label, i) => {
-                                                return {
-                                                    text: label,
-                                                    fillStyle: data.datasets[0].backgroundColor[i],
-                                                    hidden: !chart.getDataVisibility(i),
-                                                    index: i
-                                                };
-                                            });
-                                        }
-                                        return [];
-                                    }
-                                },
-                                onClick: function(e, legendItem, legend) {
-                                    const labelText = legendItem.text;
-                                    const willBeHidden = !legendItem.hidden;
+            const top5 = sortedEntries.slice(0, 5).map(e => e[0]);
 
-                                    Object.values(chartInstances).forEach(chart => {
-                                        const idx = chart.data.labels.indexOf(labelText);
-                                        if (idx !== -1) {
-                                            const currentlyHidden = !chart.getDataVisibility(idx);
-                                            if (currentlyHidden !== willBeHidden) {
-                                                chart.toggleDataVisibility(idx);
-                                            }
-                                        }
-                                    });
-                                    syncBarCharts();
-                                }
-                            },
-                            datalabels: { display: false },
-                            tooltip: {
-                                callbacks: {
-                                    label: function(context) {
-                                        const cat = context.chart.data.labels[context.dataIndex];
-                                        const realVal = data.totals[cat];
-                                        return `${cat}: ${formatCurrency(realVal !== undefined ? realVal : context.raw)}`;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
-            } else {
-                const top5 = sortedEntries.slice(0, 5).map(e => e[0]);
-
-                chartInstances[fileIdx] = new Chart(ctx, {
-                    type: 'pie',
-                    data: {
+            chartInstances[fileIdx] = new Chart(ctx, {
+                type: 'pie',
+                data: {
                         labels: Object.keys(data.totals),
                         datasets: [{
                             data: Object.values(data.totals).map(v => Math.abs(v)),
@@ -1036,7 +1022,6 @@
                     }
                 }
             });
-            }
         }
 
         renderPage(__DATA_JSON__, __OVERRIDES_JSON__, __DUPLICATES_JSON__);

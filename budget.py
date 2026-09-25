@@ -21,7 +21,7 @@ def get_short_income_desc(desc):
                 return short_desc
     return desc
 
-def generate_html(all_data, overrides, duplicates):
+def generate_html(all_data, overrides, duplicates, output_filename='report.html', is_standalone=False):
     data_json = json.dumps(all_data)
     overrides_json = json.dumps(overrides)
     duplicates_json = json.dumps(duplicates)
@@ -41,9 +41,12 @@ def generate_html(all_data, overrides, duplicates):
     html_template = html_template.replace('__OVERRIDES_JSON__', overrides_json)
     html_template = html_template.replace('__DUPLICATES_JSON__', duplicates_json)
     
-    with open('report.html', 'w', encoding='utf-8') as f:
+    standalone_css = ".hide-in-standalone { display: none !important; }" if is_standalone else ""
+    html_template = html_template.replace('__STANDALONE_CSS__', standalone_css)
+    
+    with open(output_filename, 'w', encoding='utf-8') as f:
         f.write(html_template)
-    print(f"Report generated: {os.path.abspath('report.html')}")
+    print(f"Report generated: {os.path.abspath(output_filename)}")
 
 class BudgetHandler(http.server.SimpleHTTPRequestHandler):
     csv_files = [] # Class attribute to hold csv file paths
@@ -77,6 +80,30 @@ class BudgetHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
+        elif self.path == '/generate_month_report':
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            try:
+                request_data = json.loads(post_data.decode('utf-8'))
+                month = request_data.get('month')
+                if month:
+                    all_data, overrides, duplicates = process_files(self.csv_files)
+                    filtered_data = [d for d in all_data if d['month'] == month]
+                    if filtered_data:
+                        report_name = f'report_{month}.html'
+                        generate_html(filtered_data, overrides, duplicates, output_filename=report_name, is_standalone=True)
+                        response_body = json.dumps({"message": f"Generated {report_name}"}).encode('utf-8')
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.send_header('Content-Length', str(len(response_body)))
+                        self.end_headers()
+                        self.wfile.write(response_body)
+                    else:
+                        self.send_error(404, "Month not found")
+                else:
+                    self.send_error(400, "Missing month parameter")
+            except Exception as e:
+                self.send_error(500, f"Error generating report: {e}")
         else:
             self.send_response(404)
             self.end_headers()
