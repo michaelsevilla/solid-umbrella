@@ -49,19 +49,7 @@ def main():
     # 3. Analyze the diff with Gemini
     client = genai.Client(api_key=gemini_key)
     
-    # Programmatically find a model that supports 'generateContent' to avoid
-    # environment-specific 404 errors.
-    model_name = None
-    for m in genai.list_models():
-      if 'generateContent' in m.supported_generation_methods:
-        model_name = m.name
-        break
-
-    if not model_name:
-        print("❌ Could not find a suitable Gemini model.")
-        sys.exit(1)
-
-    chat = client.chats.create(model=model_name)
+    chat = client.chats.create(model='gemini-pro')
     response = chat.send_message(
         prompt,
         config=types.GenerateContentConfig(response_mime_type="application/json")
