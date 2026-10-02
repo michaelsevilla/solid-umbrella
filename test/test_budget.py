@@ -129,7 +129,8 @@ class TestBudgetApp(unittest.TestCase):
         # 4. Verify the 'move' override was applied
         jan_data = next((d for d in all_data if d['month'] == '2026-01'), None)
         self.assertIsNotNone(jan_data)
-        self.assertNotIn('Groceries', jan_data['totals'])
+        # The 'Target' transaction was moved, but 'Vons' remains, so Groceries total should be 30.
+        self.assertEqual(jan_data['totals'].get('Groceries'), 30.0)
 
         dec_data = next((d for d in all_data if d['month'] == '2025-12'), None)
         self.assertIsNotNone(dec_data)
