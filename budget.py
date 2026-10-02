@@ -146,14 +146,22 @@ def process_files(csv_files):
                 reader = csv.DictReader(f)
                 for row in reader:
                     row = {str(k).strip(): str(v) if v is not None else '' for k, v in row.items() if k is not None}
-                    
-                    # Improved Date Parsing: Look for common date keys
+
+                    # Date Parsing: Prioritize transaction date over posted date for accuracy.
                     date_val = 'N/A'
-                    for key in row.keys():
-                        if 'date' in key.lower():
-                            date_val = row[key]
-                            break
-                    
+                    date_keys = row.keys()
+
+                    # Search for transaction date first
+                    trans_date_key = next((k for k in date_keys if 'transaction date' in k.lower() or 'trans date' in k.lower()), None)
+
+                    if trans_date_key:
+                        date_val = row[trans_date_key]
+                    else:
+                        # Fallback to the first available date column (e.g., 'Posted Date', 'Date')
+                        date_key = next((k for k in date_keys if 'date' in k.lower()), None)
+                        if date_key:
+                            date_val = row[date_key]
+
                     # Parse month (supports MM/DD/YYYY and YYYY-MM-DD formats)
                     month_key = 'Unknown'
                     if date_val != 'N/A':

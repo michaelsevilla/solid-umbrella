@@ -468,6 +468,7 @@
                         <div class="clear-cat-filter-container"></div>
                     </div>
                 </div>
+                <div id="sankey-summary-${fileIdx}" style="display: none; margin-bottom: 1rem;"></div>
                 <div class="chart-container">
                     <canvas id="chart-${fileIdx}" style="display: none;"></canvas>
                     <div id="sankey-${fileIdx}" style="display: none; width: 100%; height: 100%;"></div>
@@ -989,6 +990,26 @@
                 }
             }
             
+            // Always calculate and render the summary text panel
+            const sankeySummaryDiv = document.getElementById(`sankey-summary-${fileIdx}`);
+            if (sankeySummaryDiv) {
+                const totalIncome = data.income_total;
+                const totalExpenses = Object.values(filteredTotals).reduce((sum, val) => sum + Math.abs(val), 0);
+                const net = totalIncome - totalExpenses;
+                const expectedTotal = Math.abs(filteredTotals['Expected!'] || 0);
+                const restSpending = totalExpenses - expectedTotal;
+
+                const summaryHtml = `
+<table style="width: 100%; font-weight: bold; font-size: 16px; color: #1e293b; line-height: 1.6;">
+  <tr><td style="text-align: left; padding-right: 2rem;">Our income was</td><td style="text-align: right; color: #ec4899;">${formatCurrencyFull(totalIncome)}</td></tr>
+  <tr><td style="text-align: left; padding-right: 2rem;">Our expected expenses was</td><td style="text-align: right; color: #000000;">${formatCurrencyFull(expectedTotal)}</td></tr>
+  <tr><td style="text-align: left; padding-right: 2rem;">On other things, we spent</td><td style="text-align: right; color: #64748b;">${formatCurrencyFull(restSpending)}</td></tr>
+  <tr><td style="text-align: left; padding-right: 2rem;">Our income minus total spend was</td><td style="text-align: right; color: ${net >= 0 ? '#16a34a' : '#ef4444'};">${formatCurrencyFull(net)}</td></tr>
+</table>`;
+                sankeySummaryDiv.innerHTML = summaryHtml;
+                sankeySummaryDiv.style.display = 'block';
+            }
+
             // Calculate and display total for visible slices
             const totalAmount = Object.values(filteredTotals).reduce((sum, val) => sum + val, 0);
             const totalDiv = document.getElementById(`chart-total-${fileIdx}`);
@@ -1030,10 +1051,6 @@
                 const totalIncome = data.income_total;
                 const totalExpenses = Object.values(filteredTotals).reduce((sum, val) => sum + Math.abs(val), 0);
                 const net = totalIncome - totalExpenses;
-                
-                const expectedTotal = Math.abs(filteredTotals['Expected!'] || 0);
-                const restSpending = totalExpenses - expectedTotal;
-
                 const totalNodeColor = net > 0 ? '#16a34a' : '#ef4444';
 
                 const hovertexts = [];
@@ -1046,16 +1063,7 @@
                 });
 
                 const layout = {
-                    margin: { l: 10, r: 10, b: 10, t: 60 },
-                    annotations: [{
-                        x: 0.5,
-                        y: 1.15,
-                        xref: 'paper',
-                        yref: 'paper',
-                        text: `<b><span style="color: #ec4899">${formatCurrencyFull(totalIncome)}</span> - <span style="color: #000000">${formatCurrencyFull(expectedTotal)}</span> - <span style="color: #16a34a">${formatCurrencyFull(restSpending)}</span> = <span style="color: ${net >= 0 ? '#16a34a' : '#ef4444'}">${formatCurrencyFull(net)}</span></b>`,
-                        font: { size: 20, color: '#1e293b' },
-                        showarrow: false
-                    }]
+                    margin: { l: 10, r: 10, b: 10, t: 10 },
                 };
 
                 const sankeyData = [{
@@ -1101,75 +1109,86 @@
                 chartInstances[fileIdx].destroy();
             }
 
+            const chartType = (currentChartType === 'bar') ? 'bar' : 'pie';
+
             const sortedEntries = Object.entries(filteredTotals)
                 .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
 
             const top5 = sortedEntries.slice(0, 5).map(e => e[0]);
 
-            chartInstances[fileIdx] = new Chart(ctx, {
-                type: 'pie',
-                data: {
-                        labels: Object.keys(filteredTotals),
-                        datasets: [{
-                            data: Object.values(filteredTotals).map(v => Math.abs(v)),
-                            backgroundColor: Object.keys(filteredTotals).map(cat => window.categoryColors[cat])
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        layout: { padding: 40 },
-                    onClick: (evt, item, chart) => {
-                        if (item.length > 0) {
-                            const index = item[0].index;
-                            const label = chart.data.labels[index];
-                            if (currentClickMode === 'list') {
-                                renderTable(fileIdx, label);
-                            } else { // filter mode
-                                filteredOutCategories.add(label);
-                                allData.forEach((d, idx) => {
-                                    if (activeMonths.has(d.month)) {
-                                        renderChart(idx, d);
-                                    }
-                                });
-                                updateClearFilterButton();
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    let label = context.label || '';
-                                    if (label) {
-                                        label += ': ';
-                                    }
-                                    const realVal = filteredTotals[context.label];
-                                    if (realVal !== undefined) {
-                                        label += formatCurrency(realVal);
-                                    }
-                                    return label;
+            const chartData = {
+                labels: Object.keys(filteredTotals),
+                datasets: [{
+                    data: Object.values(filteredTotals).map(v => Math.abs(v)),
+                    backgroundColor: Object.keys(filteredTotals).map(cat => window.categoryColors[cat])
+                }]
+            };
+
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                onClick: (evt, item, chart) => {
+                    if (item.length > 0) {
+                        const index = item[0].index;
+                        const label = chart.data.labels[index];
+                        if (currentClickMode === 'list' || chartType === 'bar') {
+                            renderTable(fileIdx, label);
+                        } else { // filter mode for pie
+                            filteredOutCategories.add(label);
+                            allData.forEach((d, idx) => {
+                                if (activeMonths.has(d.month)) {
+                                    renderChart(idx, d);
                                 }
-                            }
-                        },
-                        datalabels: {
-                            formatter: (value, ctx) => {
-                                const label = ctx.chart.data.labels[ctx.dataIndex];
-                                return top5.includes(label) ? label : null;
-                            },
-                            color: '#1e293b',
-                            font: { weight: 'bold' },
-                            anchor: 'end',
-                            align: 'end',
-                            offset: 15,
-                            display: (ctx) => {
-                                const label = ctx.chart.data.labels[ctx.dataIndex];
-                                return top5.includes(label);
+                            });
+                            updateClearFilterButton();
+                        }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                const realVal = filteredTotals[context.label];
+                                if (realVal !== undefined) {
+                                    label += formatCurrency(realVal);
+                                }
+                                return label;
                             }
                         }
                     }
                 }
+            };
+
+            if (chartType === 'pie') {
+                chartOptions.layout = { padding: 40 };
+                chartOptions.plugins.datalabels = {
+                    formatter: (value, ctx) => {
+                        const label = ctx.chart.data.labels[ctx.dataIndex];
+                        return top5.includes(label) ? label : null;
+                    },
+                    color: '#1e293b',
+                    font: { weight: 'bold' },
+                    anchor: 'end',
+                    align: 'end',
+                    offset: 15,
+                    display: (ctx) => {
+                        const label = ctx.chart.data.labels[ctx.dataIndex];
+                        return top5.includes(label);
+                    }
+                };
+            } else { // bar
+                chartOptions.scales = { y: { beginAtZero: true } };
+            }
+
+            chartInstances[fileIdx] = new Chart(ctx, {
+                type: chartType,
+                data: chartData,
+                options: chartOptions
             });
         }
 
