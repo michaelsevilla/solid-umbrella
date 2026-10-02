@@ -65,7 +65,11 @@ class BudgetHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(response_data.encode('utf-8'))
             except Exception as e:
-                self.send_error(500, f"Error processing data: {e}")
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                error_response = json.dumps({'error': 'An error occurred in the backend while processing your data.', 'details': str(e)})
+                self.wfile.write(error_response.encode('utf-8'))
             return
         
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
@@ -221,29 +225,55 @@ def process_files(csv_files):
                     is_income = amt > 0 and any(kw in original_desc.lower() for kw in overrides.get('income_keywords', []))
 
                     is_ignored = False
-                    for ignored_desc in overrides.get('ignored_descriptions', []):
+                    # Handle both old list format and new dict format for ignored_descriptions
+                    ignored_rules = overrides.get('ignored_descriptions', [])
+                    if isinstance(ignored_rules, dict):
+                        ignored_rules = ignored_rules.keys()
+                    for ignored_desc in ignored_rules:
                         if ignored_desc and ignored_desc.lower() in original_desc.lower():
                             is_ignored = True
                             break
 
                     cat = None
-                    for mapped_desc, mapped_cat in overrides.get('description_mapping', {}).items():
+                    # Sort by key length, descending, to prioritize more specific matches
+                    sorted_mapping = sorted(
+                        overrides.get('description_mapping', {}).items(),
+                        key=lambda item: len(item[0]),
+                        reverse=True
+                    )
+                    for mapped_desc, override_data in sorted_mapping:
                         if mapped_desc and mapped_desc.lower() in original_desc.lower():
-                            cat = mapped_cat
+                            # Handle both old string value and new object value for backward compatibility
+                            cat = override_data['category'] if isinstance(override_data, dict) else override_data
                             break
 
-                    for mapped_desc, new_name in overrides.get('rename_mapping', {}).items():
+                    # Sort by key length, descending, to prioritize more specific matches
+                    sorted_rename_mapping = sorted(
+                        overrides.get('rename_mapping', {}).items(),
+                        key=lambda item: len(item[0]),
+                        reverse=True
+                    )
+                    for mapped_desc, override_data in sorted_rename_mapping:
                         if mapped_desc and mapped_desc.lower() in original_desc.lower():
-                            desc = new_name
+                            # Handle both old string value and new object value for backward compatibility
+                            desc = override_data['name'] if isinstance(override_data, dict) else override_data
                             break
-                    
+
                     if not cat:
-                        cat = 'Other'
+                        # No override was found, so try to use the category from the CSV.
+                        csv_cat = None
                         for key in row.keys():
                             if 'category' in key.lower():
-                                cat = row[key]
+                                csv_cat = row[key].strip()
                                 break
-                        if not cat or cat.strip() == '':
+                        
+                        if csv_cat:
+                            # If a category from the CSV is delimited (e.g., "Food; Groceries"), take only the first part.
+                            if any(d in csv_cat for d in [';', '/']):
+                                csv_cat = csv_cat.split(';')[0].split('/')[0].strip()
+                            cat = csv_cat
+
+                        if not cat:
                             cat = 'Uncategorized'
 
                     t = {
@@ -275,6 +305,10 @@ def process_files(csv_files):
                             monthly_data[month_key]['totals'][cat] = monthly_data[month_key]['totals'].get(cat, 0) + amt
         except Exception as e:
             print(f"Skipping {csv_filename} due to error: {e}")
+
+    # Add a total_expenses field to each month's data for easy display.
+    for month_key in monthly_data:
+        monthly_data[month_key]['total_expenses'] = sum(monthly_data[month_key]['totals'].values())
 
     all_data = [monthly_data[k] for k in sorted(monthly_data.keys(), reverse=True)] if monthly_data else []
     return all_data, overrides, duplicates
