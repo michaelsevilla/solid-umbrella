@@ -43,6 +43,7 @@ class TestBudgetApp(unittest.TestCase):
             f.write("01/01/2026,Target,50.00,Shopping\n")
             f.write("01/15/2026,TRINET PAYROLL,1000.00,\n")
             f.write("01/20/2026,SD GAS,100.00,Expected!\n")
+            f.write("01/25/2026,Vons,30.00,Groceries; Food\n")
             
         # Create a mock overrides.json
         self.overrides_path = os.path.join(self.script_dir, 'overrides.json')
@@ -85,13 +86,21 @@ class TestBudgetApp(unittest.TestCase):
         # Verify categorization override applied correctly (Target -> Groceries)
         target_tx = next(t for t in month_data['transactions'] if t['description'] == 'Target')
         self.assertEqual(target_tx['category'], 'Groceries')
-        self.assertEqual(month_data['totals']['Groceries'], 50.0)
+        self.assertEqual(month_data['totals']['Groceries'], 80.0)
         
         # Verify Income auto-detection
         self.assertEqual(month_data['income_total'], 1000.0)
         
         # Verify 'Expected!' expense exclusion from normal totals
         self.assertEqual(month_data['totals'].get('Expected!', 0.0), 100.0)
+        
+        # Verify that multi-part categories from CSV are parsed to the first entry
+        vons_tx = next(t for t in month_data['transactions'] if t['description'] == 'Vons')
+        self.assertEqual(vons_tx['category'], 'Groceries')
+        self.assertNotIn('Groceries; Food', month_data['totals'])
+
+        # Verify total_expenses calculation (80 for Groceries + 100 for Expected!)
+        self.assertEqual(month_data['total_expenses'], 180.0)
 
     @patch('sys.stdout')
     @patch('budget.os.path.abspath')
@@ -120,7 +129,8 @@ class TestBudgetApp(unittest.TestCase):
         # 4. Verify the 'move' override was applied
         jan_data = next((d for d in all_data if d['month'] == '2026-01'), None)
         self.assertIsNotNone(jan_data)
-        self.assertNotIn('Groceries', jan_data['totals'])
+        # The 'Target' transaction was moved, but 'Vons' remains, so Groceries total should be 30.
+        self.assertEqual(jan_data['totals'].get('Groceries'), 30.0)
 
         dec_data = next((d for d in all_data if d['month'] == '2025-12'), None)
         self.assertIsNotNone(dec_data)

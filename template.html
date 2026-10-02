@@ -177,6 +177,8 @@
         <input type="text" id="modalNameInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
         <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">Match Substring (for "All Future")</label>
         <input type="text" id="modalMatchInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">Note / Reason (Optional)</label>
+        <input type="text" id="modalNoteInput" placeholder="e.g., For tax purposes" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
         <div class="modal-buttons">
             <button class="btn btn-cancel" onclick="closeEditModal()">Cancel</button>
             <button class="btn btn-primary" onclick="applyEdit('all')">All Future</button>
@@ -188,6 +190,8 @@
         <p id="removeModalDesc" style="margin-bottom: 1rem; white-space: pre-wrap; font-size: 0.875rem;"></p>
         <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">Match Substring (for "All Matching")</label>
         <input type="text" id="removeMatchInput" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
+        <label style="font-size: 0.75rem; font-weight: bold; color: #475569;">Note / Reason (Optional)</label>
+        <input type="text" id="removeNoteInput" placeholder="e.g., Duplicate entry from other account" style="width: 100%; padding: 0.5rem; margin-bottom: 1rem; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box;">
         <div class="modal-buttons">
             <button class="btn btn-cancel" onclick="closeRemoveModal()">Cancel</button>
             <button class="btn btn-primary" style="background: #ef4444;" onclick="applyRemove('all')">All Matching</button>
@@ -215,9 +219,12 @@
         const dynamicContent = document.getElementById('dynamicContent');
         let chartInstances = {};
         let currentChartType = 'pie';
+        let currentClickMode = 'list';
         let currentFilters = {};
         let currentSorts = {};
         let activeMonths = new Set();
+        let filteredOutCategories = new Set();
+        let allCategories = new Set();
         const colorPalette = [
             '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a', '#ca8a04', '#475569',
             '#06b6d4', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6', '#f59e0b', '#3b82f6'
@@ -227,6 +234,15 @@
             const absVal = Math.abs(val);
             const str = absVal >= 1000 ? (absVal / 1000).toFixed(1) + 'k' : absVal.toFixed(0);
             return val < 0 ? '-$' + str : '$' + str;
+        }
+
+        function formatCurrencyFull(val) {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0
+            }).format(val);
         }
 
         function truncateDesc(desc) {
@@ -267,6 +283,13 @@
                 }
             });
 
+            // Show/hide click mode toggles which are only relevant for pie charts
+            document.querySelectorAll('.click-mode-toggle').forEach(el => {
+                el.style.display = type === 'pie' ? 'flex' : 'none';
+            });
+
+            updateClearFilterButton();
+
             allData.forEach((d, idx) => {
                 if (activeMonths.has(d.month)) {
                     renderChart(idx, d);
@@ -278,9 +301,22 @@
         }
         }
 
+        function setClickMode(mode) {
+            currentClickMode = mode;
+            const modes = ['list', 'filter'];
+            modes.forEach(m => {
+                const isActive = m === mode;
+                const btnClass = `btn-mode-${m}`;
+                document.querySelectorAll(`.${btnClass}`).forEach(el => {
+                    el.className = `btn ${isActive ? 'btn-primary' : 'btn-cancel'} ${btnClass}`;
+                    el.style.boxShadow = isActive ? '0 2px 4px rgb(0 0 0 / 0.1)' : 'none';
+                });
+            });
+        }
         function isIgnored(t) {
             const descLower = t.description.toLowerCase();
-            return overrides.ignored_descriptions.some(d => descLower.includes(d.toLowerCase()));
+            const ignoredKeys = Object.keys(overrides.ignored_descriptions || {});
+            return ignoredKeys.some(d => descLower.includes(d.toLowerCase()));
         }
         
         function renderPage(data, ovrs, duplicates) {
@@ -293,6 +329,15 @@
             overrides.description_mapping = overrides.description_mapping || {};
             overrides.moved_transactions = overrides.moved_transactions || {};
             overrides.rename_mapping = overrides.rename_mapping || {};
+
+            // Backwards compatibility: convert ignored_descriptions from array to object
+            if (Array.isArray(overrides.ignored_descriptions)) {
+                const newIgnores = {};
+                overrides.ignored_descriptions.forEach(item => {
+                    newIgnores[item] = { note: '' };
+                });
+                overrides.ignored_descriptions = newIgnores;
+            }
 
             // Clear previous content and reset state
             dynamicContent.innerHTML = '';
@@ -315,6 +360,7 @@
             chartInstances = {};
             currentFilters = {};
             currentSorts = {};
+            allCategories = new Set();
             
             // Keep active months if they still exist, otherwise default
             const existingMonths = new Set(allData.map(d => d.month));
@@ -327,6 +373,7 @@
             const categoryColors = {};
             let colorIdx = 0;
             allData.forEach(d => {
+                Object.keys(d.totals).forEach(cat => allCategories.add(cat));
                 Object.keys(d.totals).forEach(cat => {
                     if (cat === 'Expected!') {
                         categoryColors[cat] = '#000000';
@@ -411,11 +458,22 @@
             chartCard.className = 'card';
             chartCard.style.marginBottom = '0';
             chartCard.innerHTML = `
-                <h2>${data.month}</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <h2 style="margin-bottom: 0;">${data.month}</h2>
+                    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;">
+                        <div class="click-mode-toggle" style="display: ${currentChartType === 'pie' ? 'flex' : 'none'}; gap: 0.5rem; background: #e2e8f0; padding: 0.35rem; border-radius: 8px;">
+                            <button class="btn ${currentClickMode === 'list' ? 'btn-primary' : 'btn-cancel'} btn-mode-list" onclick="setClickMode('list')">List</button>
+                            <button class="btn ${currentClickMode === 'filter' ? 'btn-primary' : 'btn-cancel'} btn-mode-filter" onclick="setClickMode('filter')">Filter</button>
+                        </div>
+                        <div class="clear-cat-filter-container"></div>
+                    </div>
+                </div>
+                <div id="sankey-summary-${fileIdx}" style="display: none; margin-bottom: 1rem;"></div>
                 <div class="chart-container">
                     <canvas id="chart-${fileIdx}" style="display: none;"></canvas>
                     <div id="sankey-${fileIdx}" style="display: none; width: 100%; height: 100%;"></div>
                 </div>
+                <div class="chart-total" id="chart-total-${fileIdx}" style="text-align: center; font-size: 1.5rem; font-weight: bold; margin-top: 10px; padding-bottom: 1rem;"></div>
             `;
             monthCol.appendChild(chartCard);
 
@@ -434,6 +492,7 @@
                     <table id="table-${fileIdx}">
                         <thead>
                             <tr>
+                                <th style="cursor: pointer; user-select: none;" onclick="sortTable(${fileIdx}, 'date')" title="Sort by Date">Date ↕</th>
                                 <th style="cursor: pointer; user-select: none;" onclick="sortTable(${fileIdx}, 'description')" title="Sort by Description">Description ↕</th>
                                 <th style="cursor: pointer; user-select: none;" onclick="sortTable(${fileIdx}, 'category')" title="Sort by Category">Category ↕</th>
                                 <th style="cursor: pointer; user-select: none;" onclick="sortTable(${fileIdx}, 'amount')" title="Sort by Amount">Amount ↕</th>
@@ -456,6 +515,7 @@
 
         toggleMonthVisibility();
         renderOverridesTable();
+        updateClearFilterButton();
         }
 
         function toggleMonthVisibility() {
@@ -480,6 +540,29 @@
     if (currentChartType === 'bar') {
         syncBarCharts();
     }
+        }
+
+        function updateClearFilterButton() {
+            const containers = document.querySelectorAll('.clear-cat-filter-container');
+            if (!containers) return;
+
+            const showButton = filteredOutCategories.size > 0;
+            const buttonHtml = showButton ? `<button class="btn btn-cancel" style="padding: 4px 10px; font-size: 0.75rem;" onclick="clearCategoryFilters()">Clear Filter(s)</button>` : '';
+
+            containers.forEach(container => {
+                container.innerHTML = buttonHtml;
+                container.style.display = (showButton && currentChartType === 'pie') ? 'block' : 'none';
+            });
+        }
+
+        function clearCategoryFilters() {
+            filteredOutCategories.clear();
+            allData.forEach((d, idx) => {
+                if (activeMonths.has(d.month)) {
+                    renderChart(idx, d);
+                }
+            });
+            updateClearFilterButton();
         }
 
         function renderTable(fileIdx, filterCategory) {
@@ -533,6 +616,10 @@
                     if (sort.col === 'amount') {
                         valA = parseFloat(valA);
                         valB = parseFloat(valB);
+                    } else if (sort.col === 'date') {
+                        // Handles MM/DD/YYYY and YYYY-MM-DD
+                        valA = new Date(valA);
+                        valB = new Date(valB);
                     } else {
                         valA = valA.toString().toLowerCase();
                         valB = valB.toString().toLowerCase();
@@ -546,11 +633,11 @@
             const sumStr = formatCurrency(tableSum);
 
             if (activeFilter) {
-                title.innerText = `${sumStr} - Transactions: ${activeFilter}`;
+                title.innerText = `${sumStr} - ${activeFilter}`;
                 const isIncomeFilter = (data.income_breakdown || []).some(inc => (inc.short_desc || inc.desc) === activeFilter);
                 title.style.color = isIncomeFilter ? '#16a34a' : (window.categoryColors[activeFilter] || 'inherit');
             } else {
-                title.innerText = `${sumStr} - All Transactions`;
+                title.innerText = `${sumStr} - All`;
                 title.style.color = 'inherit';
             }
             clearBtn.style.display = activeFilter ? 'inline' : 'none';
@@ -562,6 +649,7 @@
                 const amountStr = formatCurrency(amountVal);
                 const colorStyle = amountVal < 0 ? 'color: red;' : '';
                 tr.innerHTML = `
+                    <td>${t.date}</td>
                     <td>${t.description}</td>
                     <td><span class="tag">${t.category}</span></td>
                     <td style="${colorStyle}">${amountStr}</td>
@@ -600,6 +688,7 @@
                 tr.appendChild(ruleTd);
 
                 const actionTd = document.createElement('td');
+                actionTd.style.textAlign = 'center';
                 const deleteBtn = document.createElement('button');
                 deleteBtn.className = 'btn btn-cancel';
                 deleteBtn.style.padding = '2px 8px';
@@ -611,12 +700,21 @@
             };
 
             Object.entries(overrides.description_mapping || {}).forEach(([desc, cat]) => {
-                const ruleText = `Recategorize "<em>${truncateDesc(desc)}</em>" as <strong>${cat}</strong>`;
+                const category = (typeof cat === 'object' && cat.category !== undefined) ? cat.category : cat;
+                const note = (typeof cat === 'object') ? cat.note : '';
+                let ruleText = `Recategorize "<em>${truncateDesc(desc)}</em>" as <strong>${category}</strong>`;
+                if (note) {
+                    ruleText += `<br><small style="color: #64748b; font-style: italic;">Note: ${note}</small>`;
+                }
                 tbody.appendChild(createRow(ruleText, 'desc', desc));
             });
 
-            (overrides.ignored_descriptions || []).forEach(desc => {
-                const ruleText = `Remove transactions matching "<em>${truncateDesc(desc)}</em>"`;
+            Object.entries(overrides.ignored_descriptions || {}).forEach(([desc, data]) => {
+                const note = (typeof data === 'object') ? data.note : '';
+                let ruleText = `Remove transactions matching "<em>${truncateDesc(desc)}</em>"`;
+                if (note) {
+                    ruleText += `<br><small style="color: #64748b; font-style: italic;">Note: ${note}</small>`;
+                }
                 tbody.appendChild(createRow(ruleText, 'remove', desc));
             });
 
@@ -627,7 +725,12 @@
             });
 
             Object.entries(overrides.rename_mapping || {}).forEach(([desc, newName]) => {
-                const ruleText = `Rename "<em>${truncateDesc(desc)}</em>" to <strong>${newName}</strong>`;
+                const name = (typeof newName === 'object' && newName.name !== undefined) ? newName.name : newName;
+                const note = (typeof newName === 'object') ? newName.note : '';
+                let ruleText = `Rename "<em>${truncateDesc(desc)}</em>" to <strong>${name}</strong>`;
+                if (note) {
+                    ruleText += `<br><small style="color: #64748b; font-style: italic;">Note: ${note}</small>`;
+                }
                 tbody.appendChild(createRow(ruleText, 'rename', desc));
             });
         }
@@ -637,12 +740,9 @@
             if (type === 'desc' && overrides.description_mapping[key]) {
                 delete overrides.description_mapping[key];
                 changed = true;
-            } else if (type === 'remove') {
-                const index = overrides.ignored_descriptions.indexOf(key);
-                if (index > -1) {
-                    overrides.ignored_descriptions.splice(index, 1);
-                    changed = true;
-                }
+            } else if (type === 'remove' && overrides.ignored_descriptions[key] !== undefined) {
+                delete overrides.ignored_descriptions[key];
+                changed = true;
             } else if (type === 'move' && overrides.moved_transactions[key]) {
                 delete overrides.moved_transactions[key];
                 changed = true;
@@ -669,8 +769,19 @@
             document.getElementById('modalDesc').innerText = `Editing transaction:\n${trans.original_description || trans.description}`;
             document.getElementById('modalCategoryInput').value = trans.category;
             document.getElementById('modalNameInput').value = trans.description;
-            document.getElementById('modalMatchInput').value = trans.original_description || trans.description;
+            const matchStr = trans.original_description || trans.description;
+            document.getElementById('modalMatchInput').value = matchStr;
             
+            // Populate note from existing override if it exists
+            const catOverride = overrides.description_mapping[matchStr];
+            const renameOverride = overrides.rename_mapping[matchStr];
+            let note = '';
+            if (typeof catOverride === 'object' && catOverride.note) {
+                note = catOverride.note;
+            } else if (typeof renameOverride === 'object' && renameOverride.note) {
+                note = renameOverride.note;
+            }
+            document.getElementById('modalNoteInput').value = note;
             document.getElementById('editModal').showModal();
         }
 
@@ -683,6 +794,7 @@
             if (!currentEdit) return;
             const newCat = document.getElementById('modalCategoryInput').value.trim();
             const newName = document.getElementById('modalNameInput').value.trim();
+            const newNote = document.getElementById('modalNoteInput').value.trim();
             const trans = currentEdit.trans;
             
 
@@ -695,14 +807,34 @@
                 
                 let changed = false;
                 if (newCat && newCat !== trans.category) {
-                    overrides.description_mapping[matchStr] = newCat;
+                    overrides.description_mapping[matchStr] = { category: newCat, note: newNote };
                     changed = true;
                 }
-                if (newName && newName !== (trans.original_description || trans.description)) {
-                    overrides.rename_mapping[matchStr] = newName;
+                if (newName && newName !== trans.description) {
+                    overrides.rename_mapping[matchStr] = { name: newName, note: newNote };
                     changed = true;
                 }
                 
+                if (!changed) {
+                    // Handle case where only the note is updated for an existing rule
+                    const catOverride = overrides.description_mapping[matchStr];
+                    if (catOverride && newCat === ((typeof catOverride === 'object') ? catOverride.category : catOverride)) {
+                        const oldNote = (typeof catOverride === 'object') ? catOverride.note : '';
+                        if (oldNote !== newNote) {
+                            overrides.description_mapping[matchStr] = { category: newCat, note: newNote };
+                            changed = true;
+                        }
+                    }
+                    const renameOverride = overrides.rename_mapping[matchStr];
+                    if (renameOverride && newName === ((typeof renameOverride === 'object') ? renameOverride.name : renameOverride)) {
+                        const oldNote = (typeof renameOverride === 'object') ? renameOverride.note : '';
+                        if (oldNote !== newNote) {
+                            overrides.rename_mapping[matchStr] = { name: newName, note: newNote };
+                            changed = true;
+                        }
+                    }
+                }
+
                 if (!changed) {
                     closeEditModal();
                     return;
@@ -719,6 +851,7 @@
             const trans = allData[fileIdx].transactions[transIdx];
             currentRemove = { fileIdx, transIdx, trans };
             document.getElementById('removeModalDesc').innerText = `Remove this transaction and exclude it from reports?\n\n${trans.description}`;
+            document.getElementById('removeNoteInput').value = '';
             document.getElementById('removeMatchInput').value = trans.description;
             document.getElementById('removeModal').showModal();
         }
@@ -733,22 +866,20 @@
             const trans = currentRemove.trans;
             if (type === 'all') {
                 const matchStr = document.getElementById('removeMatchInput').value.trim();
+                const note = document.getElementById('removeNoteInput').value.trim();
                 if (!matchStr) {
                     alert("Please provide a substring to match.");
                     return;
                 }
-                if (!overrides.ignored_descriptions.includes(matchStr)) {
-                    overrides.ignored_descriptions.push(matchStr);
-                }
+                overrides.ignored_descriptions[matchStr] = { note: note };
             }
             closeRemoveModal();
             saveOverridesAndReload();
         }
 
         function reAddTransaction(desc) {
-            const index = (overrides.ignored_descriptions || []).indexOf(desc);
-            if (index > -1) {
-                overrides.ignored_descriptions.splice(index, 1);
+            if (overrides.ignored_descriptions && overrides.ignored_descriptions[desc] !== undefined) {
+                delete overrides.ignored_descriptions[desc];
                 saveOverridesAndReload();
             }
         }
@@ -778,34 +909,36 @@
                 return;
             }
             const trans = currentMove.trans;
-            const tId = `${trans.date}|${trans.description}|${parseFloat(trans.amount).toFixed(2)}`;
+            const tId = `${trans.date}|${trans.original_description}|${parseFloat(trans.amount).toFixed(2)}`;
             overrides.moved_transactions[tId] = newMonth;
             saveOverridesAndReload();
             closeMoveModal();
         }
 
-        function saveOverridesAndReload() {
-            // Optional: Show a loading indicator
+        async function saveOverridesAndReload() {
             document.body.style.cursor = 'wait';
+            try {
+                await fetch('/save_overrides', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(overrides, null, 2)
+                });
 
-            saveOverrides().then(() => {
-                return fetch('/data?_t=' + new Date().getTime(), { cache: 'no-store' });
-            }).then(res => res.json()).then(newData => {
-                renderPage(newData.data, newData.overrides, newData.duplicates);
-            }).catch(err => {
+                const response = await fetch('/data?_t=' + new Date().getTime(), { cache: 'no-store' });
+                const responseData = await response.json();
+                
+                if (!response.ok) {
+                    const errorMessage = `Server Error: ${responseData.error}\n\nDetails: ${responseData.details}`;
+                    throw new Error(errorMessage);
+                }
+                
+                renderPage(responseData.data, responseData.overrides, responseData.duplicates);
+            } catch (err) {
                 console.error("Error saving and reloading:", err);
-                alert("An error occurred while refreshing data. Please check the console.");
-            }).finally(() => {
+                alert("An error occurred while refreshing data:\n\n" + err.message);
+            } finally {
                 document.body.style.cursor = 'default';
-            });
-        }
-
-        function saveOverrides() {
-            return fetch('/save_overrides', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(overrides, null, 2)
-            }).catch(err => console.error("Error saving overrides:", err));
+            }
         }
 
     function generateReport() {
@@ -849,6 +982,41 @@
 
             if (!data) return;
             
+            // Filter totals based on global filter
+            const filteredTotals = {};
+            for (const cat in data.totals) {
+                if (!filteredOutCategories.has(cat)) {
+                    filteredTotals[cat] = data.totals[cat];
+                }
+            }
+            
+            // Always calculate and render the summary text panel
+            const sankeySummaryDiv = document.getElementById(`sankey-summary-${fileIdx}`);
+            if (sankeySummaryDiv) {
+                const totalIncome = data.income_total;
+                const totalExpenses = Object.values(filteredTotals).reduce((sum, val) => sum + Math.abs(val), 0);
+                const net = totalIncome - totalExpenses;
+                const expectedTotal = Math.abs(filteredTotals['Expected!'] || 0);
+                const restSpending = totalExpenses - expectedTotal;
+
+                const summaryHtml = `
+<table style="width: 100%; font-weight: bold; font-size: 16px; color: #1e293b; line-height: 1.6;">
+  <tr><td style="text-align: left; padding-right: 2rem;">Our income was</td><td style="text-align: right; color: #ec4899;">${formatCurrencyFull(totalIncome)}</td></tr>
+  <tr><td style="text-align: left; padding-right: 2rem;">Our expected expenses was</td><td style="text-align: right; color: #000000;">${formatCurrencyFull(expectedTotal)}</td></tr>
+  <tr><td style="text-align: left; padding-right: 2rem;">On other things, we spent</td><td style="text-align: right; color: #64748b;">${formatCurrencyFull(restSpending)}</td></tr>
+  <tr><td style="text-align: left; padding-right: 2rem;">Our income minus total spend was</td><td style="text-align: right; color: ${net >= 0 ? '#16a34a' : '#ef4444'};">${formatCurrencyFull(net)}</td></tr>
+</table>`;
+                sankeySummaryDiv.innerHTML = summaryHtml;
+                sankeySummaryDiv.style.display = 'block';
+            }
+
+            // Calculate and display total for visible slices
+            const totalAmount = Object.values(filteredTotals).reduce((sum, val) => sum + val, 0);
+            const totalDiv = document.getElementById(`chart-total-${fileIdx}`);
+            if (totalDiv) {
+                totalDiv.innerText = (currentChartType === 'pie' || currentChartType === 'bar') ? `Total: ${formatCurrency(totalAmount)}` : '';
+            }
+
             if (currentChartType === 'sankey') {
                 canvas.style.display = 'none';
                 sankeyDiv.style.display = 'block';
@@ -860,8 +1028,8 @@
                 });
                 const incomeKeys = Object.keys(incomeAgg);
                 const totalIdx = incomeKeys.length;
-
-                const labels = [...incomeKeys, "Total", ...Object.keys(data.totals)];
+                const expenseLabels = Object.keys(filteredTotals);
+                const labels = [...incomeKeys, "Total", ...expenseLabels];
                 const sources = [];
                 const targets = [];
                 const values = [];
@@ -874,41 +1042,28 @@
                 });
 
                 // Outflows to Expenses
-                Object.values(data.totals).forEach((val, i) => {
+                Object.values(filteredTotals).forEach((val, i) => {
                     sources.push(totalIdx); // From "Total"
                     targets.push(totalIdx + 1 + i); // To specific category
                     values.push(Math.abs(val));
                 });
 
                 const totalIncome = data.income_total;
-                const totalExpenses = Object.values(data.totals).reduce((sum, val) => sum + Math.abs(val), 0);
+                const totalExpenses = Object.values(filteredTotals).reduce((sum, val) => sum + Math.abs(val), 0);
                 const net = totalIncome - totalExpenses;
-                
-                const expectedTotal = Math.abs(data.totals['Expected!'] || 0);
-                const restSpending = totalExpenses - expectedTotal;
-
                 const totalNodeColor = net > 0 ? '#16a34a' : '#ef4444';
 
                 const hovertexts = [];
                 incomeKeys.forEach(key => {
-                    hovertexts.push(`<b>${key}</b><br>${formatCurrency(incomeAgg[key])}<extra></extra>`);
+                    hovertexts.push(`<b>${key}</b><br>${formatCurrencyFull(incomeAgg[key])}<extra></extra>`);
                 });
-                hovertexts.push(`<b>Total</b><br>In: ${formatCurrency(totalIncome)}<br>Out: ${formatCurrency(-totalExpenses)}<br>Net: ${formatCurrency(net)}<extra></extra>`);
-                Object.keys(data.totals).forEach(key => {
-                    hovertexts.push(`<b>${key}</b><br>${formatCurrency(data.totals[key])}<extra></extra>`);
+                hovertexts.push(`<b>Total</b><br>In: ${formatCurrencyFull(totalIncome)}<br>Out: ${formatCurrencyFull(-totalExpenses)}<br>Net: ${formatCurrencyFull(net)}<extra></extra>`);
+                expenseLabels.forEach(key => {
+                    hovertexts.push(`<b>${key}</b><br>${formatCurrencyFull(filteredTotals[key])}<extra></extra>`);
                 });
 
                 const layout = {
-                    margin: { l: 10, r: 10, b: 10, t: 60 },
-                    annotations: [{
-                        x: 0.5,
-                        y: 1.15,
-                        xref: 'paper',
-                        yref: 'paper',
-                        text: `<b><span style="color: #ec4899">${formatCurrency(totalIncome)}</span> - <span style="color: #000000">${formatCurrency(expectedTotal)}</span> - <span style="color: #16a34a">${formatCurrency(restSpending)}</span> = <span style="color: ${net >= 0 ? '#16a34a' : '#ef4444'}">${formatCurrency(net)}</span></b>`,
-                        font: { size: 20, color: '#1e293b' },
-                        showarrow: false
-                    }]
+                    margin: { l: 10, r: 10, b: 10, t: 10 },
                 };
 
                 const sankeyData = [{
@@ -919,7 +1074,7 @@
                         thickness: 20,
                         line: { color: "black", width: 0.5 },
                         label: labels,
-                        color: [...incomeKeys.map(() => "#ec4899"), totalNodeColor, ...Object.keys(data.totals).map(cat => window.categoryColors[cat])],
+                        color: [...incomeKeys.map(() => "#ec4899"), totalNodeColor, ...expenseLabels.map(cat => window.categoryColors[cat])],
                         hovertext: hovertexts,
                         hoverinfo: 'text'
                     },
@@ -954,80 +1109,86 @@
                 chartInstances[fileIdx].destroy();
             }
 
-            const sortedEntries = Object.entries(data.totals)
+            const chartType = (currentChartType === 'bar') ? 'bar' : 'pie';
+
+            const sortedEntries = Object.entries(filteredTotals)
                 .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
 
             const top5 = sortedEntries.slice(0, 5).map(e => e[0]);
 
-            chartInstances[fileIdx] = new Chart(ctx, {
-                type: 'pie',
-                data: {
-                        labels: Object.keys(data.totals),
-                        datasets: [{
-                            data: Object.values(data.totals).map(v => Math.abs(v)),
-                            backgroundColor: Object.keys(data.totals).map(cat => window.categoryColors[cat])
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        layout: { padding: 40 },
-                        onClick: (evt, item, chart) => {
-                        if (item.length > 0) {
-                            const index = item[0].index;
-                            const label = chart.data.labels[index];
+            const chartData = {
+                labels: Object.keys(filteredTotals),
+                datasets: [{
+                    data: Object.values(filteredTotals).map(v => Math.abs(v)),
+                    backgroundColor: Object.keys(filteredTotals).map(cat => window.categoryColors[cat])
+                }]
+            };
+
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                onClick: (evt, item, chart) => {
+                    if (item.length > 0) {
+                        const index = item[0].index;
+                        const label = chart.data.labels[index];
+                        if (currentClickMode === 'list' || chartType === 'bar') {
                             renderTable(fileIdx, label);
+                        } else { // filter mode for pie
+                            filteredOutCategories.add(label);
+                            allData.forEach((d, idx) => {
+                                if (activeMonths.has(d.month)) {
+                                    renderChart(idx, d);
+                                }
+                            });
+                            updateClearFilterButton();
                         }
-                    },
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    let label = context.label || '';
-                                    if (label) {
-                                        label += ': ';
-                                    }
-                                    const realVal = data.totals[context.label];
-                                    if (realVal !== undefined) {
-                                        label += formatCurrency(realVal);
-                                    }
-                                    return label;
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.label || '';
+                                if (label) {
+                                    label += ': ';
                                 }
-                            }
-                        },
-                        datalabels: {
-                            formatter: (value, ctx) => {
-                                const label = ctx.chart.data.labels[ctx.dataIndex];
-                                return top5.includes(label) ? label : null;
-                            },
-                            color: '#1e293b',
-                            font: { weight: 'bold' },
-                            anchor: 'end',
-                            align: 'end',
-                            offset: 15,
-                            display: (ctx) => {
-                                const label = ctx.chart.data.labels[ctx.dataIndex];
-                                return top5.includes(label);
-                            },
-                            listeners: {
-                                render: (context) => {
-                                    const { chart, dataIndex } = context;
-                                    const { ctx } = chart;
-                                    const meta = chart.getDatasetMeta(0).data[dataIndex];
-                                    const { x, y } = meta.tooltipPosition();
-                                    
-                                    ctx.strokeStyle = '#94a3b8';
-                                    ctx.lineWidth = 1;
-                                    ctx.beginPath();
-                                    ctx.moveTo(meta.x, meta.y);
-                                    ctx.lineTo(x, y);
-                                    ctx.stroke();
+                                const realVal = filteredTotals[context.label];
+                                if (realVal !== undefined) {
+                                    label += formatCurrency(realVal);
                                 }
+                                return label;
                             }
                         }
                     }
                 }
+            };
+
+            if (chartType === 'pie') {
+                chartOptions.layout = { padding: 40 };
+                chartOptions.plugins.datalabels = {
+                    formatter: (value, ctx) => {
+                        const label = ctx.chart.data.labels[ctx.dataIndex];
+                        return top5.includes(label) ? label : null;
+                    },
+                    color: '#1e293b',
+                    font: { weight: 'bold' },
+                    anchor: 'end',
+                    align: 'end',
+                    offset: 15,
+                    display: (ctx) => {
+                        const label = ctx.chart.data.labels[ctx.dataIndex];
+                        return top5.includes(label);
+                    }
+                };
+            } else { // bar
+                chartOptions.scales = { y: { beginAtZero: true } };
+            }
+
+            chartInstances[fileIdx] = new Chart(ctx, {
+                type: chartType,
+                data: chartData,
+                options: chartOptions
             });
         }
 

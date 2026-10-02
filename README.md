@@ -6,12 +6,16 @@ A lightweight, interactive local web application to visualize and analyze your p
 
 ## Features
 - **Multi-Account Support:** Feed it multiple CSVs (checking, savings, credit cards) and it will combine them into seamless monthly views.
-- **Interactive Visuals:** Toggle between Pie Charts, Sankey "Cash Flow" diagrams, and Bar Charts (Raw Values) to see where your money is going.
+- **Interactive Visuals:**
+    - Toggle between Pie Charts, Sankey "Cash Flow" diagrams, and Bar Charts (Raw Values).
+    - Filter charts on the fly by clicking categories in "Filter" mode.
 - **Live UI Updates:** Edit categories, move transactions, or create overrides directly in the browser. The UI reloads instantly without a server restart.
 - **Granular Transaction Control:**
     - **Categorize:** Change the category for a single transaction or all future ones.
     - **Move:** Correct posting dates by moving a transaction to a different month with a single click.
     - **Rename:** Clean up recurring "Expected!" expenses (e.g., rename "Bilt Rewards Pmt" to "Mortgage").
+    - **Add Context:** Add an optional note to any override rule to remember why it was created.
+- **Robust Data Parsing:** Intelligently parses dates (transaction vs. posted), amounts (debit/credit columns), and categories (handles delimited values like "Food;Groceries").
 - **Standalone Reports:** Generate clean, read-only HTML dashboards for specific months to share securely (enable via `--enable-reports`).
 - **Smart Sorting:** Click table headers to sort by amount, description, or category.
 - **Income Tracking:** Automatically detects payroll deposits and breaks them down at the top of the monthly reports (configure custom keywords via `income_keywords` in `overrides.json`).
